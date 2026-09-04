@@ -9,6 +9,11 @@ export default tseslint.config(
 			'node_modules/**',
 			'backups/**',
 			'**/*.test.ts',
+			// Test-only scaffolding, alongside the test files themselves: it
+			// uses jest globals that the plugin's own lint config does not
+			// declare, and it never ships in the bundle.
+			'src/__mocks__/**',
+			'src/**/test-support.ts',
 			'jest.config.js',
 			'jest.setup.js',
 			'esbuild.config.mjs',

@@ -10,6 +10,7 @@ import { InlineFootnoteManager } from '../managers/inline-footnote-manager';
 import { SearchParser, SearchToken, ParsedSearch, ASTNode, OperatorNode, FilterNode, TextNode } from '../utils/search-parser';
 import { SimpleSearchManager } from '../managers/simple-search-manager';
 import { STANDARD_FOOTNOTE_REGEX, FOOTNOTE_VALIDATION_REGEX } from '../utils/regex-patterns';
+import { locateFootnoteDefinition } from '../utils/footnote-parser';
 import { normalizeVisibleNesting, CHECKBOX_REGEX_WITH_PREFIX } from '../utils/task-status';
 import { stripTasksPluginMetadata } from '../utils/task-metadata';
 import { compareHighlights, compareTasks, SortFallback, SortMode } from '../utils/sort-order';
@@ -29,6 +30,7 @@ import {
 import { HtmlHighlightParser } from '../utils/html-highlight-parser';
 import { DateSuggest } from '../utils/date-suggest';
 import { t } from '../i18n';
+import { addAiMenuItems, aiAvailable, showAiMenu } from './ai-actions';
 
 // Private Obsidian APIs used by the sidebar (not part of the public typings).
 interface PrivateCommandsApi {
@@ -142,7 +144,9 @@ export class HighlightsSidebarView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: HighlightCommentsPlugin) {
         super(leaf);
         this.plugin = plugin;
-        this.highlightRenderer = new HighlightRenderer(plugin);
+        // The view is the Component that owns any rich comment renders, so
+        // they unload with it rather than outliving the panel.
+        this.highlightRenderer = new HighlightRenderer(plugin, this);
         this.taskManager = new TaskManager(plugin);
         this.taskRenderer = new TaskRenderer(plugin);
 
@@ -1120,6 +1124,9 @@ export class HighlightsSidebarView extends ItemView {
         // Clean up dropdown manager
         this.dropdownManager.cleanup();
 
+        // Unload any rich comment renders and their observers
+        this.highlightRenderer.disposeRichRenders();
+
         // Clean up editor scroll listener
         this.detachEditorScrollListener();
 
@@ -1334,6 +1341,7 @@ export class HighlightsSidebarView extends ItemView {
         if (!updatedHighlight) {
             // Highlight was deleted, remove element
             existingElement.remove();
+            this.highlightRenderer.releaseDetachedRenders();
             return;
         }
 
@@ -1353,6 +1361,9 @@ export class HighlightsSidebarView extends ItemView {
                 newElement.classList.add('highlight-selected');
                 this.applyHighlightColorStyling(newElement, updatedHighlight);
             }
+
+            // The replaced card's rich renders are detached now.
+            this.highlightRenderer.releaseDetachedRenders();
         }
     }
 
@@ -3567,6 +3578,9 @@ export class HighlightsSidebarView extends ItemView {
 
         // Reset to normal list area structure for highlights
         this.contentAreaEl.empty();
+        // Emptying the container detaches every rendered comment; unload the
+        // renders that went with them before building new ones.
+        this.highlightRenderer.releaseDetachedRenders();
         this.listContainerEl = this.contentAreaEl.createDiv({ cls: 'highlights-list' });
 
         // Get search term - if no search input (toolbar disabled), use empty string
@@ -4567,7 +4581,12 @@ export class HighlightsSidebarView extends ItemView {
             },
             onContextMenu: (highlight, event) => {
                 this.showHighlightContextMenu(highlight, event);
-            }
+            },
+            // Omitted entirely when AI is off, so the card keeps its old
+            // layout rather than growing a button that does nothing.
+            onAiMenu: aiAvailable(this.plugin)
+                ? (highlight, event) => showAiMenu(this.plugin, highlight, event)
+                : undefined
         };
 
         return this.highlightRenderer.createHighlightItem(container, highlight, options);
@@ -4579,6 +4598,13 @@ export class HighlightsSidebarView extends ItemView {
      */
     private showHighlightContextMenu(highlight: Highlight, event: MouseEvent) {
         const menu = new Menu();
+
+        // AI actions lead, then a separator: the rest of this menu is
+        // destructive, and the two groups should not be adjacent.
+        if (aiAvailable(this.plugin)) {
+            addAiMenuItems(menu, this.plugin, highlight);
+            menu.addSeparator();
+        }
 
         const hasComments = !highlight.isNativeComment
             && !!highlight.footnoteContents
@@ -5818,27 +5844,23 @@ export class HighlightsSidebarView extends ItemView {
                     }
                 }
             } else {
-                // For standard footnotes, find the footnote definition
+                // For standard footnotes, find the footnote definition.
+                // Located through the shared parser so a multi-line definition
+                // is treated as the one block the sidebar shows it as.
                 const footnoteKey = targetFootnote.content;
-                const footnoteDefRegex = new RegExp(`^\\[\\^${this.escapeRegex(footnoteKey)}\\]:\\s*(.+)$`, 'm');
-                const footnoteDefMatch = content.match(footnoteDefRegex);
+                const definition = locateFootnoteDefinition(content, footnoteKey);
 
-                if (!footnoteDefMatch) {
+                if (!definition) {
                     new Notice('Could not find footnote definition.');
                     return;
                 }
 
-                // Calculate position of footnote definition
-                const footnoteDefIndex = content.indexOf(footnoteDefMatch[0]);
-                const footnoteDefStartPos = editor.offsetToPos(footnoteDefIndex);
+                const footnoteDefStartPos = editor.offsetToPos(definition.start);
 
                 if (this.plugin.settings.selectTextOnCommentClick) {
-                    // Select the content after the colon and space
-                    const definitionContent = footnoteDefMatch[1];
-                    const contentStartIndex = footnoteDefIndex + footnoteDefMatch[0].indexOf(definitionContent);
-                    const contentEndIndex = contentStartIndex + definitionContent.length;
-                    const selectionStart = editor.offsetToPos(contentStartIndex);
-                    const selectionEnd = editor.offsetToPos(contentEndIndex);
+                    // Select the comment text, continuation lines included.
+                    const selectionStart = editor.offsetToPos(definition.contentStart);
+                    const selectionEnd = editor.offsetToPos(definition.contentEnd);
                     
                     // Scroll to and select the comment text
                     editor.scrollIntoView({ from: selectionStart, to: selectionEnd }, true);

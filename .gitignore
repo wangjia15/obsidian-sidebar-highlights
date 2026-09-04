@@ -34,3 +34,6 @@ restore-log.txt
 
 # Local hot-reload marker (not for distribution)
 .hotreload
+
+# Local agent scratch (worktrees, transient state)
+.claude/

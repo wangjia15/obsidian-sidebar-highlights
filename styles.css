@@ -705,6 +705,9 @@
     padding: 6px 15px;
     transition: background-color 0.15s ease, color 0.15s ease;
     border-bottom: 0.5px solid var(--background-modifier-border);
+    /* Footnote comments can span lines since the parser reads continuations;
+       keep the breaks visible until the rich renderer handles blocks. */
+    white-space: pre-wrap;
 }
 
 .highlight-comment:last-child {
@@ -2361,4 +2364,532 @@
     color: var(--text-muted);
     font-size: var(--font-ui-small);
     margin-left: 12px;
+}
+/* ==========================================================================
+   AI settings
+   ========================================================================== */
+
+/* Stated before the key field rather than after it: the storage caveat is
+   something the user needs while deciding, not after deciding. */
+.sh-ai-privacy-notice {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border-left: 3px solid var(--text-accent);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+}
+
+.sh-ai-privacy-title {
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+    margin-bottom: 6px;
+}
+
+.sh-ai-privacy-list {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.55;
+}
+
+.sh-ai-privacy-list li + li {
+    margin-top: 4px;
+}
+
+/* Keys, URLs and model ids are long and unbreakable; the default control
+   width truncates them to the point of being unreadable. */
+.sh-ai-wide-input {
+    width: 100%;
+    min-width: 220px;
+}
+
+.sh-ai-field-warning {
+    margin-top: 4px;
+    color: var(--text-warning);
+    font-size: var(--font-ui-smaller);
+}
+
+/* --- AI prompts: settings list --- */
+
+.sh-ai-prompts-desc {
+    margin: -4px 0 12px;
+}
+
+.sh-ai-prompt-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 6px;
+    color: var(--text-muted);
+}
+
+.sh-ai-prompt-icon .svg-icon {
+    width: 15px;
+    height: 15px;
+}
+
+/* --- AI prompts: editor modal --- */
+
+.sh-ai-prompt-modal .sh-ai-prompt-notice {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+
+/* Templates are multi-line and worth seeing whole; the default control width
+   turns them into a one-line slit. */
+.sh-ai-prompt-modal .sh-ai-prompt-textarea {
+    width: 100%;
+    min-height: 60px;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    resize: vertical;
+}
+
+.sh-ai-prompt-modal .setting-item {
+    display: block;
+    border-top: none;
+    padding: 8px 0;
+}
+
+.sh-ai-prompt-modal .setting-item-control {
+    justify-content: flex-start;
+    padding-top: 6px;
+    width: 100%;
+}
+
+.sh-ai-variable-palette {
+    margin: 4px 0 12px;
+}
+
+.sh-ai-variable-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.sh-ai-variable-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sh-ai-variable-chip {
+    padding: 2px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    cursor: pointer;
+    box-shadow: none;
+    height: auto;
+}
+
+.sh-ai-variable-chip:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Still insertable, but dimmed: the variable resolves to nothing until the
+   matching setting is turned on. */
+.sh-ai-variable-chip.is-gated {
+    opacity: 0.55;
+    border-style: dashed;
+}
+
+.sh-ai-prompt-warnings:empty {
+    display: none;
+}
+
+.sh-ai-prompt-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: var(--text-warning);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+
+.sh-ai-prompt-warning.is-hint {
+    color: var(--text-muted);
+}
+
+.sh-ai-prompt-warning-icon {
+    display: inline-flex;
+    flex: none;
+    margin-top: 2px;
+}
+
+.sh-ai-prompt-warning-icon .svg-icon {
+    width: 14px;
+    height: 14px;
+}
+
+/* --- AI run: entry button on the card --- */
+
+.highlight-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    border: none;
+    border-radius: var(--radius-s);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.highlight-action-button:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.highlight-action-button .svg-icon {
+    width: 14px;
+    height: 14px;
+}
+
+/* --- AI run: confirm-before-send modal --- */
+
+.sh-ai-confirm-modal {
+    min-width: 420px;
+    max-width: 560px;
+}
+
+/* The whole point of the modal: what the user agrees to has to read as facts,
+   not as a wall of settings rows. */
+.sh-ai-confirm-lead {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+.sh-ai-confirm-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 14px;
+    padding: 10px 14px;
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    margin-bottom: 12px;
+}
+
+.sh-ai-confirm-key {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+
+.sh-ai-confirm-value {
+    color: var(--text-normal);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    /* Endpoints and model ids are long unbreakable strings; wrapping them
+       beats letting the modal grow past the viewport. */
+    word-break: break-all;
+    min-width: 0;
+}
+
+/* --- AI run: result modal --- */
+
+.sh-ai-result-title-icon {
+    display: inline-flex;
+    vertical-align: text-bottom;
+    margin-right: 6px;
+    color: var(--text-accent);
+}
+
+.sh-ai-result-title-icon .svg-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.sh-ai-result-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.sh-ai-result-model {
+    font-family: var(--font-monospace);
+}
+
+.sh-ai-result-warning {
+    margin-bottom: 10px;
+    color: var(--text-warning);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+
+.sh-ai-result-body {
+    max-height: 48vh;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    margin-bottom: 10px;
+}
+
+/* Line breaks are the only formatting kept until the rich renderer arrives;
+   without pre-wrap a model's paragraphs run together. */
+.sh-ai-result-text {
+    white-space: pre-wrap;
+    color: var(--text-normal);
+    line-height: 1.6;
+}
+
+.sh-ai-result-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    /* Keeps the follow-up row from jumping when the status line empties. */
+    min-height: 24px;
+}
+
+.sh-ai-result-spinner {
+    display: inline-flex;
+    color: var(--text-accent);
+    animation: sh-ai-spin 1s linear infinite;
+}
+
+@keyframes sh-ai-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.sh-ai-result-stop {
+    height: auto;
+    padding: 2px 10px;
+    font-size: var(--font-ui-smaller);
+    margin-left: auto;
+}
+
+.sh-ai-result-error {
+    color: var(--text-error);
+    white-space: pre-wrap;
+    line-height: 1.6;
+}
+
+.sh-ai-result-footer {
+    margin-top: 4px;
+}
+
+/* --- AI run: follow-up row --- */
+
+.sh-ai-followup {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.sh-ai-followup-input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* ==========================================================================
+   Rich comment rendering and diagrams
+   ========================================================================== */
+
+/* Block-level content brings its own paragraph spacing, so the pre-wrap that
+   keeps line breaks in flat comments would double every gap here. */
+.highlight-comment.sh-rich-comment {
+    white-space: normal;
+}
+
+/* Holds the row open at roughly its final height while the render waits for
+   the card to scroll into view, so the list does not jump underneath. */
+.sh-rich-comment.is-pending {
+    min-height: var(--sh-rich-estimated-height, 40px);
+}
+
+.sh-rich-comment > :first-child {
+    margin-top: 0;
+}
+
+.sh-rich-comment > :last-child {
+    margin-bottom: 0;
+}
+
+.sh-rich-comment p {
+    margin: 0 0 0.5em;
+}
+
+.sh-rich-comment ul,
+.sh-rich-comment ol {
+    margin: 0 0 0.5em;
+    padding-left: 1.4em;
+}
+
+/* Wide content scrolls inside the comment rather than widening the sidebar. */
+.sh-rich-comment pre,
+.sh-rich-comment table {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.sh-rich-comment pre {
+    padding: 8px 10px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+}
+
+.sh-rich-comment table {
+    display: block;
+    border-collapse: collapse;
+    font-size: var(--font-ui-smaller);
+}
+
+.sh-rich-comment blockquote {
+    margin: 0 0 0.5em;
+    padding-left: 10px;
+    border-left: 2px solid var(--background-modifier-border);
+    color: var(--text-muted);
+}
+
+/* --- Diagrams inline in the sidebar --- */
+
+.sh-rich-comment .sh-diagram {
+    position: relative;
+    max-height: var(--sh-diagram-max-height, 320px);
+    overflow: hidden;
+    cursor: zoom-in;
+}
+
+.sh-rich-comment .sh-diagram svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Says "there is more below" without a scrollbar the narrow panel has no room
+   for; the whole diagram is one click away. */
+.sh-rich-comment .sh-diagram::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 28px;
+    background: linear-gradient(to bottom, transparent, var(--background-modifier-form-field));
+    pointer-events: none;
+}
+
+.sh-rich-comment .sh-diagram-fallback {
+    margin: 0 0 0.5em;
+}
+
+.sh-diagram-error {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 4px;
+    color: var(--text-warning);
+    font-size: var(--font-ui-smaller);
+}
+
+.sh-diagram-error-icon {
+    display: inline-flex;
+}
+
+.sh-diagram-error-icon .svg-icon {
+    width: 13px;
+    height: 13px;
+}
+
+/* --- Diagram zoom modal --- */
+
+.sh-diagram-modal {
+    width: 92vw;
+    height: 88vh;
+    max-width: none;
+}
+
+.sh-diagram-modal .modal-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.sh-diagram-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 10px;
+}
+
+.sh-diagram-toolbar-spacer {
+    flex: 1;
+}
+
+.sh-diagram-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    height: auto;
+}
+
+.sh-diagram-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    cursor: grab;
+}
+
+.sh-diagram-stage.is-dragging {
+    cursor: grabbing;
+}
+
+.sh-diagram-canvas {
+    /* Transform origin at the centre keeps pointer-anchored zoom symmetric. */
+    transform-origin: center center;
+    will-change: transform;
+}
+
+/* The clone carries explicit pixel dimensions set in the modal; nothing here
+   may clamp them, or the diagram collapses the way an unsized SVG does. */
+.sh-diagram-canvas svg {
+    max-width: none;
+    max-height: none;
+}
+
+/* --- AI batch run: progress inside the notice --- */
+
+.sh-ai-batch-progress {
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    /* Highlight text in the progress line varies in length; a fixed row keeps
+       the notice from resizing on every item. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 260px;
+}
+
+.sh-ai-batch-stop {
+    margin-left: 10px;
+    padding: 2px 10px;
+    height: auto;
+    font-size: var(--font-ui-smaller);
 }

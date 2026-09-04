@@ -3,7 +3,9 @@
     "createHighlight": "从选中文本创建高亮",
     "toggle": "切换",
     "goToCollection": "转到{{name}}",
-    "applyDisplayMode": "应用显示模式：{{name}}"
+    "applyDisplayMode": "应用显示模式：{{name}}",
+    "runAiPrompt": "AI：{{name}}",
+    "runAiPromptOnNote": "AI：{name}（当前笔记全部高亮）"
   },
   "tabs": {
     "currentNote": "当前笔记",
@@ -140,6 +142,164 @@
         "desc": "点击注释时，选择注释而不是将光标定位在其前面。注意：仅适用于内联脚注 (^[...]) 和标准脚注 ([^1])，不适用于 HTML 注释或自定义模式。"
       }
     },
+    "ai": {
+      "heading": "AI",
+      "enable": {
+        "name": "启用 AI 功能",
+        "desc": "默认关闭。关闭状态下插件不会发起任何网络请求。"
+      },
+      "privacy": {
+        "title": "填入密钥之前",
+        "storage": "API 密钥以明文保存在插件的 data.json 中，该文件会随 vault 同步。请勿在共享 vault 中填写。",
+        "backups": "AI 设置不会写入插件的备份文件，因此备份中不会留下密钥副本。",
+        "scope": "只有在你主动执行提示词时才会发送内容，且只发送该提示词需要的部分。插件不会在后台发送任何东西。"
+      },
+      "profile": {
+        "name": "当前配置",
+        "desc": "执行提示词时使用的服务商。可以添加多个，随时切换。",
+        "empty": "还没有配置。添加一个来选择服务商和模型。",
+        "untitled": "未命名配置",
+        "add": "添加配置"
+      },
+      "field": {
+        "name": {
+          "name": "配置名称",
+          "placeholder": "例如：工作账号"
+        },
+        "provider": {
+          "name": "服务商",
+          "desc": "选择服务商会自动填入其默认地址与模型；若你已改过，则不会覆盖。",
+          "custom": "自定义端点"
+        },
+        "wireFormat": {
+          "name": "接口格式",
+          "desc": "该端点使用的请求格式。大多数第三方端点都兼容 OpenAI。"
+        },
+        "baseUrl": {
+          "name": "Base URL",
+          "desc": "需包含版本号段，与服务商文档中给出的写法保持一致。"
+        },
+        "apiKey": {
+          "name": "API 密钥",
+          "desc": "以明文保存在插件的 data.json 中。",
+          "getKey": "获取密钥",
+          "placeholder": "粘贴密钥",
+          "optional": "该服务商无需密钥",
+          "reveal": "显示密钥",
+          "hide": "隐藏密钥",
+          "missing": "该服务商需要填写密钥才能使用。"
+        },
+        "model": {
+          "name": "模型",
+          "desc": "自由填写，因此比这里列出的更新的模型同样可用。",
+          "placeholder": "模型名称",
+          "fetch": "拉取模型列表",
+          "fetching": "拉取中…",
+          "fetchSuccess": "找到 {{count}} 个模型",
+          "fetchEmpty": "服务商没有返回任何模型。",
+          "fetchFailed": "拉取模型列表失败。{{reason}}"
+        },
+        "temperature": {
+          "name": "Temperature",
+          "desc": "留空则使用服务商默认值。部分推理模型不接受该参数。",
+          "placeholder": "服务商默认"
+        },
+        "maxTokens": {
+          "name": "最大输出 token",
+          "desc": "留空则使用服务商默认值。",
+          "placeholder": "服务商默认"
+        }
+      },
+      "actions": {
+        "name": "配置操作",
+        "desc": "测试会发送一次极短的请求，确认密钥、地址与模型三者能对上。",
+        "test": "测试连接",
+        "testing": "测试中…",
+        "testSuccess": "连接成功，由 {{model}} 应答。",
+        "testFailed": "连接失败。{{reason}}",
+        "duplicate": "复制",
+        "delete": "删除",
+        "copyName": "{{name}} 副本"
+      },
+      "timeout": {
+        "name": "请求超时",
+        "desc": "等待响应的秒数，超过则放弃。"
+      },
+      "context": {
+        "heading": "发送内容",
+        "includeNote": {
+          "name": "允许提示词读取整篇笔记",
+          "desc": "默认关闭。关闭时 {{note}} 与 {{context}} 解析为空，只发送高亮本身。"
+        },
+        "includeComments": {
+          "name": "允许提示词读取已有评论",
+          "desc": "让模板可以引用 {{comments}}。默认关闭。"
+        },
+        "charLimit": {
+          "name": "上下文字符上限",
+          "desc": "单次提示词最多可携带多少笔记正文。"
+        },
+        "targetLanguage": {
+          "name": "默认翻译语言",
+          "desc": "用于 {{targetLang}}。留空则翻译成 Obsidian 的显示语言。"
+        },
+        "confirm": {
+          "name": "首次发送前确认",
+          "desc": "在任何内容离开本机之前，按 vault 提示一次目标地址与载荷大小。"
+        }
+      },
+      "prompts": {
+        "heading": "提示词",
+        "desc": "可以对高亮执行的操作。内置提示词可以停用或修改，但不能删除 —— 清除修改即可恢复原样。",
+        "edit": "编辑",
+        "reset": "恢复",
+        "delete": "删除",
+        "add": "新建提示词",
+        "edited": "已修改",
+        "disabled": "已停用",
+        "export": "复制为 JSON",
+        "import": "粘贴 JSON",
+        "exported": "已复制 {{count}} 条提示词修改到剪贴板",
+        "exportEmpty": "你还没有修改过任何提示词，没有可复制的内容。",
+        "exportFailed": "无法访问剪贴板。请改从开发者控制台复制该 JSON。",
+        "importTitle": "粘贴提示词 JSON",
+        "importDesc": "将用粘贴的内容替换你的提示词修改。未被你改动过的内置提示词不受影响。",
+        "importPlaceholder": "粘贴你从另一个 vault 复制的 JSON",
+        "importButton": "导入",
+        "imported": "已导入 {{count}} 条提示词修改",
+        "importInvalid": "这不是有效的提示词列表。应为一个 JSON 数组，每项含 id 字段。",
+        "cancel": "取消"
+      },
+      "rendering": {
+        "heading": "评论渲染",
+        "desc": "对侧栏中所有评论生效，与是否开启 AI 无关。",
+        "enable": {
+          "name": "富文本渲染",
+          "desc": "含代码块、表格、列表或图表的评论改用 Obsidian 完整 Markdown 渲染。关闭后回到纯行内格式。"
+        },
+        "mermaid": {
+          "name": "渲染 mermaid 图表",
+          "desc": "把 mermaid 代码块画成图。解析失败的图表回退为源码显示。"
+        },
+        "maxHeight": {
+          "name": "图表最大高度",
+          "desc": "超过该像素高度的图表在侧栏中会被裁剪，点击可全屏查看。"
+        }
+      },
+      "streaming": {
+        "name": "流式输出",
+        "desc": "边生成边显示答案。仅桌面端可用——移动端始终等待完整响应，无法建立流式连接时也会自动回退。",
+        "mobile": "移动端不可用，本设备始终等待完整响应。"
+      },
+      "usage": {
+        "heading": "本月用量",
+        "desc": "仅本地统计，不会发送到任何地方。不记录提示词与回答内容，只记录总数。",
+        "summary": "{calls} 次调用 · {promptTokens} 提示 tokens · {completionTokens} 生成 tokens",
+        "none": "本月尚无记录。",
+        "reset": "清空统计",
+        "resetDone": "用量统计已清空"
+      }
+    },
     "detection": {
       "heading": "检测",
       "detectHtmlComments": {
@@ -235,6 +395,57 @@
       "manualBackupSkipped": "已跳过备份 — 最近的备份内容完全相同。"
     }
   },
+  "ai": {
+    "readiness": {
+      "disabled": "AI 功能已关闭。请在设置的 AI 一节中开启。",
+      "noProfile": "尚未配置 AI。请在设置的 AI 一节中添加。",
+      "noBaseUrl": "该配置没有填写 Base URL。",
+      "noModel": "该配置没有填写模型名称。",
+      "noApiKey": "该配置没有填写 API 密钥。"
+    },
+    "errors": {
+      "auth": "鉴权失败，请检查 API 密钥。",
+      "rate-limit": "服务商正在限流，请稍后重试。",
+      "quota": "服务商提示额度已用尽。",
+      "network": "无法连接服务商，请检查网络与 Base URL。",
+      "timeout": "请求超时。",
+      "bad-request": "服务商拒绝了该请求。",
+      "server": "服务商内部出错。",
+      "aborted": "请求已停止。",
+      "unknown": "请求失败。",
+      "noModelList": "{{provider}} 不支持拉取模型列表。"
+    },
+    "profile": {
+      "defaultName": "{{provider}} 配置"
+    },
+    "prompts": {
+      "summarize": "总结",
+      "explain": "解释",
+      "translate": "翻译",
+      "ask": "追问",
+      "tags": "提取标签",
+      "diagram": "生成图示",
+      "untitled": "未命名提示词"
+    },
+    "run": {
+      "working": "正在执行 {{name}}…",
+      "inserted": "已添加为评论",
+      "fileMissing": "该笔记已不在 vault 中。",
+      "emptyAnswer": "模型没有返回可插入的内容。",
+      "writeFailed": "无法写入该笔记。",
+      "highlightMoved": "该高亮在侧栏上次读取之后发生了变化，没有可安全附加评论的位置。请刷新侧栏后重试。"
+    },
+    "batch": {
+      "empty": "没有可执行的高亮",
+      "starting": "正在处理 {count} 条高亮…",
+      "progress": "{done}/{total} · {current}",
+      "stop": "停止",
+      "done": "已完成 {count} 条高亮。",
+      "stopped": "已停止，完成 {count} 条高亮。",
+      "failures": "{count} 条失败：{names}",
+      "writeFailed": "评论写入失败"
+    }
+  },
   "sidebar": {
     "title": "高亮"
   },
@@ -265,7 +476,8 @@
   "actions": {
     "moveToCollection": "移动到...",
     "removeFromCollection": "从合集中移除",
-    "clearSelection": "清除选择"
+    "clearSelection": "清除选择",
+    "aiMenu": "AI 操作"
   },
   "grouping": {
     "none": "无",
@@ -474,6 +686,69 @@
       "stats": "{{collections}} 个收藏 • {{highlights}} 个收藏高亮",
       "restore": "恢复",
       "close": "关闭"
+    },
+    "aiPrompt": {
+      "createTitle": "新建提示词",
+      "editTitle": "编辑提示词",
+      "builtinNotice": "这是内置提示词。你的修改以补丁形式保存，未改动的部分会随插件持续改进。",
+      "nameLabel": "名称",
+      "namePlaceholder": "显示在菜单中",
+      "iconLabel": "图标",
+      "iconDesc": "Lucide 图标名，例如 sparkles。",
+      "systemLabel": "System 提示",
+      "systemDesc": "设定模型的角色。可留空。",
+      "templateLabel": "模板",
+      "templateDesc": "发送给模型的消息。点击下方变量即可插入。",
+      "variables": "变量",
+      "variableGated": "需要开启对应设置",
+      "unknownVariable": "不是可用变量：{{names}}。它将按原样发送。",
+      "noSelection": "模板中若从不引用 {{selection}}，就读不到高亮内容。",
+      "outputLabel": "输出",
+      "outputPreview": "仅预览",
+      "outputComment": "插入为评论",
+      "outputBoth": "先预览，再决定",
+      "enabledLabel": "在菜单中显示",
+      "save": "保存",
+      "cancel": "取消",
+      "emptyTemplate": "提示词必须有模板。"
+    },
+    "aiConfirm": {
+      "title": "发送给模型？",
+      "lead": "目前尚未发送任何内容。以下是将要离开本机的部分。",
+      "prompt": "提示词",
+      "provider": "服务商",
+      "endpoint": "接口地址",
+      "model": "模型",
+      "payload": "载荷",
+      "payloadValue": "{{chars}} 个字符",
+      "dontAsk": "此 vault 中不再询问",
+      "cancel": "取消",
+      "send": "发送"
+    },
+    "aiResult": {
+      "generating": "生成中…",
+      "stop": "停止",
+      "answeredBy": "由 {{model}} 应答",
+      "insert": "插入为评论",
+      "copy": "复制",
+      "copied": "已复制",
+      "copyFailed": "无法访问剪贴板。",
+      "regenerate": "重新生成",
+      "retry": "重试",
+      "close": "关闭",
+      "followUpPlaceholder": "追加一句要求…",
+      "followUpSend": "发送",
+      "unknownVariable": "该模板引用了 {{names}}，它不是可用变量，已按原样发送。"
+    },
+    "diagramZoom": {
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "reset": "重置视图",
+      "copySource": "复制图表源码",
+      "copySvg": "复制 SVG",
+      "copiedSource": "已复制图表源码",
+      "copiedSvg": "已复制 SVG",
+      "copyFailed": "无法写入剪贴板"
     }
   },
   "notices": {
@@ -491,5 +766,9 @@
     "highlightRemoved": "已移除高亮",
     "commentsRemoved": "已移除评论",
     "highlightAndCommentsRemoved": "已移除高亮和评论"
+  },
+  "render": {
+    "diagramError": "图表无法渲染",
+    "diagramZoom": "点击放大"
   }
 }

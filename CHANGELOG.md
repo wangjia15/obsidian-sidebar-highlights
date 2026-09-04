@@ -5,6 +5,23 @@ All notable changes to the Sidebar Highlights plugin will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **AI assistance for highlights.** Off by default; no network call is made until it is switched on, a provider is configured, and the first send is confirmed. Nine builtin providers (OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, SiliconFlow, OpenRouter, Ollama, LM Studio) plus any OpenAI-compatible endpoint, reachable from a highlight's context menu, its sparkles button, or the command palette.
+- **Six builtin prompts** — summarize, explain, translate, key points, ask, diagram — each of which can be edited, disabled, or replaced. Editing a builtin stores only what you changed, so improvements to the shipped wording still reach you. Custom prompts can be written against `{{selection}}`, `{{note}}`, `{{comments}}`, `{{tags}}` and others, and exported or imported as JSON.
+- **A result panel** that previews an answer before it touches the note: insert it as a comment, copy it, ask a follow-up, regenerate, or switch provider and compare.
+- **Batch runs** over every highlight in a note, executed one at a time with a progress line, a stop button, and a summary of anything that failed.
+- **Mermaid and rich rendering for comments.** A comment containing a fenced block, table, list or quote is now rendered with Obsidian's full markdown pipeline; mermaid blocks become diagrams, and clicking one opens it full screen with zoom and pan. Applies to every comment, not only AI-written ones, and can be switched off.
+- **Streaming responses** on desktop, with automatic fallback to a normal request when a stream cannot be established.
+- **Local usage totals** for the current month — call and token counts only, never prompts or answers.
+
+### Changed
+- **Multi-line footnote comments are now read in full.** A footnote definition's indented continuation lines belong to the comment, matching how Obsidian renders it. Previously only the first line was shown in the sidebar, so a comment holding a code block or diagram appeared truncated. Deleting such a comment now removes the whole definition rather than leaving its continuation lines behind as stray text.
+
+### Fixed
+- A footnote definition with nothing after the colon no longer adopts the following paragraph as its content.
+
 ## [1.40.3] - 2026-08-30
 
 ### Fixed

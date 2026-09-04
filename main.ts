@@ -6,9 +6,15 @@ import { ExcludedFilesModal } from './src/modals/excluded-files-modal';
 import { BackupSelectorModal } from './src/modals/backup-selector-modal';
 import { STANDARD_FOOTNOTE_REGEX, FOOTNOTE_VALIDATION_REGEX, createMarkdownHighlightRegex, createInlineCodeRegex } from './src/utils/regex-patterns';
 import { HtmlHighlightParser } from './src/utils/html-highlight-parser';
+import { extractFootnoteDefinitions, removeFootnoteDefinition } from './src/utils/footnote-parser';
 import { hasDelimiterInsideRanges } from './src/utils/range-exclusion';
 import { SortMode } from './src/utils/sort-order';
 import { i18n, t } from './src/i18n';
+import { AiService } from './src/ai/ai-service';
+import { DEFAULT_AI_SETTINGS, addUsage, cloneAiSettings, usageMonth, type AiResult, type AiSettings } from './src/ai/types';
+import { renderAiSettings } from './src/settings/ai-settings-section';
+import { enabledPrompts } from './src/ai/prompt-library';
+import { runPromptOnHighlight, runPromptOnHighlights } from './src/views/ai-actions';
 
 export interface Highlight {
     id: string;
@@ -164,6 +170,7 @@ export interface CommentPluginSettings {
     displayModes: DisplayMode[]; // Saved display mode configurations
     currentDisplayModeId: string | null; // Currently active display mode ID
     maxAutomaticBackups: number; // How many automatic backups to retain (manual backups are never deleted)
+    ai: AiSettings; // AI providers, prompts and rich-content rendering (see src/ai/types.ts)
 }
 
 const DEFAULT_SETTINGS: CommentPluginSettings = {
@@ -226,7 +233,8 @@ const DEFAULT_SETTINGS: CommentPluginSettings = {
     collapsedGroups: [], // Nothing collapsed by default
     displayModes: [], // Empty array by default
     currentDisplayModeId: null, // No active display mode by default
-    maxAutomaticBackups: 20 // Keep the 20 most recent automatic backups by default
+    maxAutomaticBackups: 20, // Keep the 20 most recent automatic backups by default
+    ai: DEFAULT_AI_SETTINGS // AI off by default: no configuration means no network calls
 }
 
 // Bounds for the automatic backup retention setting
@@ -261,6 +269,7 @@ export default class HighlightCommentsPlugin extends Plugin {
     collections: Map<string, Collection> = new Map();
     collectionsManager: CollectionsManager;
     inlineFootnoteManager: InlineFootnoteManager;
+    aiService: AiService;
     // Every sidebar view currently alive. Obsidian runs the registerView
     // factory for each one it builds, and it can build more than one: a second
     // pane, a pop-out window, or another plugin hosting the view in a detached
@@ -272,6 +281,7 @@ export default class HighlightCommentsPlugin extends Plugin {
     private detectHighlightsTimeout: number | null = null;
     public selectedHighlightId: string | null = null;
     public collectionCommands: Set<string> = new Set(); // Track registered collection commands
+    private aiPromptCommands: Set<string> = new Set(); // Track registered AI prompt commands
     private isScanningFiles: boolean = false; // Prevent concurrent scans
 
     async onload() {
@@ -298,6 +308,9 @@ export default class HighlightCommentsPlugin extends Plugin {
         this.collections = new Map(Object.entries(this.settings.collections || {}));
         this.collectionsManager = new CollectionsManager(this);
         this.inlineFootnoteManager = new InlineFootnoteManager();
+        // Reads settings through a getter rather than a copy, so profile edits
+        // in the settings tab take effect without re-creating the service.
+        this.aiService = new AiService(() => this.settings.ai);
         
         // Register hover source for link previews
         // Note: registerHoverLinkSource may not be available in all Obsidian versions
@@ -382,6 +395,9 @@ export default class HighlightCommentsPlugin extends Plugin {
 
         // Register display mode commands
         this.registerDisplayModeCommands();
+
+        // Register a command per enabled AI prompt
+        this.registerAiPromptCommands();
 
         // Register all vault events after workspace is ready to avoid processing during initialization
         this.app.workspace.onLayoutReady(async () => {
@@ -498,6 +514,19 @@ export default class HighlightCommentsPlugin extends Plugin {
         if (loadedData.customColorNames !== undefined) {
             merged.customColorNames = loadedData.customColorNames;
         }
+
+        // `merged` is a shallow copy, so its `ai` is still the module-level
+        // default object. Cloning is what keeps a profile edit from mutating
+        // DEFAULT_SETTINGS for the rest of the session. The spread on top is a
+        // one-level deep merge, so a settings file written by an older AI build
+        // gains any keys added since instead of leaving them undefined.
+        merged.ai = {
+            ...cloneAiSettings(DEFAULT_AI_SETTINGS),
+            ...(loadedData.ai ?? {})
+        };
+        merged.ai.profiles = (loadedData.ai?.profiles ?? []).map(profile => ({ ...profile }));
+        merged.ai.prompts = (loadedData.ai?.prompts ?? []).map(prompt => ({ ...prompt }));
+        merged.ai.usage = { ...DEFAULT_AI_SETTINGS.usage, ...(loadedData.ai?.usage ?? {}) };
 
         return merged;
     }
@@ -793,6 +822,11 @@ export default class HighlightCommentsPlugin extends Plugin {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const filename = `data-backup-${reason}-${timestamp}.json`;
 
+            // Deliberately a narrow allowlist, not the whole settings object.
+            // Backups live in the vault and travel with it, so `ai` must never
+            // be added here: it holds API keys in plain text, and a backup file
+            // is one more copy of them to leak. Restoring a backup leaves the
+            // user's AI configuration untouched, which is the intent.
             const criticalData = {
                 settingsVersion: this.settings.settingsVersion,
                 collections: this.settings.collections,
@@ -1506,6 +1540,16 @@ export default class HighlightCommentsPlugin extends Plugin {
         }
     }
 
+    /**
+     * WARNING for anyone bumping DEFAULT_SETTINGS.settingsVersion: this rebuilds
+     * settings from defaults and copies back only the fields listed below. Every
+     * field that is *not* in that list — displayModes, customPatterns,
+     * tabSettings, fileFilters, collapsedGroups, the font sizes, the task
+     * options — is silently reset for every existing user the moment the version
+     * changes. Add a field here before adding it to the version bump, or leave
+     * the version alone and rely on safeMergeSettings, which is what the AI
+     * settings do.
+     */
     async migrateSettings(oldSettings: StoredPluginData) {
         try {
             // Always backup before migration
@@ -1577,7 +1621,16 @@ export default class HighlightCommentsPlugin extends Plugin {
                     ...oldSettings.customColors
                 };
             }
-            
+            if (oldSettings.ai !== undefined) {
+                this.settings.ai = {
+                    ...cloneAiSettings(DEFAULT_AI_SETTINGS),
+                    ...oldSettings.ai,
+                    profiles: (oldSettings.ai.profiles ?? []).map(profile => ({ ...profile })),
+                    prompts: (oldSettings.ai.prompts ?? []).map(prompt => ({ ...prompt })),
+                    usage: { ...DEFAULT_AI_SETTINGS.usage, ...(oldSettings.ai.usage ?? {}) }
+                };
+            }
+
             // Update version to current
             this.settings.settingsVersion = newVersion;
             
@@ -1696,6 +1749,102 @@ export default class HighlightCommentsPlugin extends Plugin {
         }
     }
 
+
+    /**
+     * Folds one answer into this month's local totals.
+     *
+     * Counts only, never prompts or answers: a per-call log would be a record
+     * of what the user has been reading, sitting in plain text in the vault.
+     * Nothing here is ever transmitted.
+     */
+    public recordAiUsage(result: AiResult): void {
+        this.settings.ai.usage = addUsage(this.settings.ai.usage, result.usage, usageMonth());
+        void this.saveSettings();
+    }
+
+    /**
+     * One command per enabled prompt, so each can take a hotkey.
+     *
+     * Re-registered whenever prompts change: Obsidian keys commands by id, so
+     * a renamed prompt would otherwise keep showing its old name in the
+     * palette, and a deleted one would leave a command with nothing to run.
+     */
+    public registerAiPromptCommands() {
+        this.unregisterAiPromptCommands();
+        if (!this.settings.ai.enabled) return;
+
+        for (const prompt of enabledPrompts(this.settings.ai.prompts)) {
+            const commandId = `ai-prompt-${prompt.id}`;
+            this.addCommand({
+                id: commandId,
+                name: t('commands.runAiPrompt', { name: prompt.name }),
+                checkCallback: (checking: boolean) => {
+                    const highlight = this.getHighlightForAiCommand();
+                    if (!highlight) return false;
+                    if (!checking) {
+                        void runPromptOnHighlight(this, prompt, highlight);
+                    }
+                    return true;
+                }
+            });
+            this.aiPromptCommands.add(commandId);
+
+            // The same prompt over every highlight in the active note. Greyed
+            // out unless there is a note open with something to run on.
+            const batchId = `ai-prompt-batch-${prompt.id}`;
+            this.addCommand({
+                id: batchId,
+                name: t('commands.runAiPromptOnNote', { name: prompt.name }),
+                checkCallback: (checking: boolean) => {
+                    const highlights = this.getHighlightsForAiBatch();
+                    if (highlights.length === 0) return false;
+                    if (!checking) {
+                        void runPromptOnHighlights(this, prompt, highlights);
+                    }
+                    return true;
+                }
+            });
+            this.aiPromptCommands.add(batchId);
+        }
+    }
+
+    /** Every highlight in the note the user is looking at. */
+    private getHighlightsForAiBatch(): Highlight[] {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return [];
+        return this.highlights.get(file.path) ?? [];
+    }
+
+    private unregisterAiPromptCommands() {
+        for (const commandId of this.aiPromptCommands) {
+            this.removeCommand(commandId);
+        }
+        this.aiPromptCommands.clear();
+    }
+
+    /**
+     * What a prompt command acts on: the sidebar's selected highlight, or
+     * failing that the one under the cursor in the active note. Returning null
+     * greys the command out rather than letting it run against nothing.
+     */
+    private getHighlightForAiCommand(): Highlight | null {
+        if (this.selectedHighlightId) {
+            for (const highlights of this.highlights.values()) {
+                const match = highlights.find(highlight => highlight.id === this.selectedHighlightId);
+                if (match) return match;
+            }
+        }
+
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const file = activeView?.file;
+        if (!activeView || !file) return null;
+
+        const cursorOffset = activeView.editor.posToOffset(activeView.editor.getCursor());
+        const candidates = this.highlights.get(file.path) ?? [];
+        return candidates.find(highlight =>
+            cursorOffset >= highlight.startOffset && cursorOffset <= highlight.endOffset
+        ) ?? null;
+    }
 
     // Unregister all collection commands
     private unregisterCollectionCommands() {
@@ -1947,8 +2096,8 @@ export default class HighlightCommentsPlugin extends Plugin {
 
     /**
      * For each footnote name in `removedNames`, if there's no remaining
-     * reference to it in `content`, delete its `[^name]: ...` definition
-     * (including any indented continuation lines).
+     * reference to it in `content`, delete its definition — including every
+     * continuation line it owns, so a multi-line comment leaves no residue.
      */
     private removeOrphanedFootnoteDefinitions(content: string, removedNames: string[]): string {
         let newContent = content;
@@ -1962,12 +2111,7 @@ export default class HighlightCommentsPlugin extends Plugin {
             const refRegex = new RegExp(`\\[\\^${escaped}\\](?!:)`);
             if (refRegex.test(newContent)) continue;
 
-            // Remove the definition + any indented continuation lines + trailing newline.
-            const defRegex = new RegExp(
-                `^\\[\\^${escaped}\\]:.*(?:\\n[ \\t]+.*)*\\n?`,
-                'm'
-            );
-            newContent = newContent.replace(defRegex, '');
+            newContent = removeFootnoteDefinition(newContent, name);
         }
         return newContent;
     }
@@ -2564,16 +2708,9 @@ export default class HighlightCommentsPlugin extends Plugin {
 
 
     extractFootnotes(content: string): Map<string, string> {
-        const footnoteMap = new Map<string, string>();
-        const footnoteRegex = /^\[\^(\w+)\]:\s*(.+)$/gm;
-        let match;
-        
-        while ((match = footnoteRegex.exec(content)) !== null) {
-            const [, key, footnoteContent] = match;
-            footnoteMap.set(key, footnoteContent.trim());
-        }
-        
-        return footnoteMap;
+        // Multi-line aware: a definition owns its indented continuation lines,
+        // the same way Obsidian renders it.
+        return extractFootnoteDefinitions(content);
     }
 
     private async handleFileCreate(file: TFile) {
@@ -3764,6 +3901,11 @@ class HighlightSettingTab extends PluginSettingTab {
                     // Re-scan all files to apply new detection setting
                     void this.plugin.scanAllFilesForHighlights();
                 }));
+
+        // AI SECTION
+        // Owns and re-renders its own container so adding or switching a
+        // profile does not rebuild this whole settings tab.
+        renderAiSettings(containerEl.createDiv({ cls: 'sh-ai-settings-section' }), this.plugin);
 
         // CUSTOM PATTERNS SECTION
         // Create heading with experimental badge

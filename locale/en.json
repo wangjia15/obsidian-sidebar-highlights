@@ -3,7 +3,9 @@
     "createHighlight": "Create highlight from selection",
     "toggle": "Toggle",
     "goToCollection": "Go to {{name}}",
-    "applyDisplayMode": "Apply display mode: {{name}}"
+    "applyDisplayMode": "Apply display mode: {{name}}",
+    "runAiPrompt": "AI: {{name}}",
+    "runAiPromptOnNote": "AI: {name} (all highlights in note)"
   },
   "tabs": {
     "currentNote": "Current note",
@@ -155,6 +157,164 @@
         "desc": "When clicking a comment, select the comment instead of positioning the cursor in front of it. Note: Only works for inline footnotes (^[...]) and standard footnotes ([^1]), not HTML comments or custom patterns."
       }
     },
+    "ai": {
+      "heading": "AI",
+      "enable": {
+        "name": "Enable AI features",
+        "desc": "Off by default. While this is off the plugin makes no network requests of any kind."
+      },
+      "privacy": {
+        "title": "Before you add a key",
+        "storage": "API keys are stored in plain text in the plugin's data.json, which syncs with your vault. Do not add one to a shared vault.",
+        "backups": "AI settings are left out of the plugin's backups, so a backup file never carries a copy of your key.",
+        "scope": "Text is sent only when you run a prompt, and only the text that prompt asks for. Nothing is sent in the background."
+      },
+      "profile": {
+        "name": "Active profile",
+        "desc": "The provider used when you run a prompt. Add more than one to switch between services.",
+        "empty": "No profiles yet. Add one to choose a provider and a model.",
+        "untitled": "Untitled profile",
+        "add": "Add profile"
+      },
+      "field": {
+        "name": {
+          "name": "Profile name",
+          "placeholder": "e.g. Work account"
+        },
+        "provider": {
+          "name": "Provider",
+          "desc": "Picking a provider fills in its default URL and model, unless you have already changed them.",
+          "custom": "Custom endpoint"
+        },
+        "wireFormat": {
+          "name": "API format",
+          "desc": "Which request shape the endpoint speaks. Most third-party endpoints are OpenAI compatible."
+        },
+        "baseUrl": {
+          "name": "Base URL",
+          "desc": "Include the version segment, exactly as the provider's documentation shows it."
+        },
+        "apiKey": {
+          "name": "API key",
+          "desc": "Stored in plain text in the plugin's data.json.",
+          "getKey": "Get a key",
+          "placeholder": "Paste your key",
+          "optional": "Not required for this provider",
+          "reveal": "Show key",
+          "hide": "Hide key",
+          "missing": "This provider needs a key before it can be used."
+        },
+        "model": {
+          "name": "Model",
+          "desc": "Free text, so a model newer than this list still works.",
+          "placeholder": "Model name",
+          "fetch": "Fetch models",
+          "fetching": "Fetching…",
+          "fetchSuccess": "Found {{count}} models",
+          "fetchEmpty": "The provider returned no models.",
+          "fetchFailed": "Could not fetch models. {{reason}}"
+        },
+        "temperature": {
+          "name": "Temperature",
+          "desc": "Leave empty to use the provider's default. Some reasoning models reject this parameter entirely.",
+          "placeholder": "Provider default"
+        },
+        "maxTokens": {
+          "name": "Max output tokens",
+          "desc": "Leave empty to use the provider's default.",
+          "placeholder": "Provider default"
+        }
+      },
+      "actions": {
+        "name": "Profile actions",
+        "desc": "Test sends one very short request to confirm the key, URL and model all line up.",
+        "test": "Test connection",
+        "testing": "Testing…",
+        "testSuccess": "Connected. Answered by {{model}}.",
+        "testFailed": "Connection failed. {{reason}}",
+        "duplicate": "Duplicate",
+        "delete": "Delete",
+        "copyName": "{{name}} copy"
+      },
+      "timeout": {
+        "name": "Request timeout",
+        "desc": "Seconds to wait before giving up on a response."
+      },
+      "context": {
+        "heading": "What gets sent",
+        "includeNote": {
+          "name": "Allow prompts to read the whole note",
+          "desc": "Off by default. While off, {{note}} and {{context}} resolve to nothing and only the highlight itself is sent."
+        },
+        "includeComments": {
+          "name": "Allow prompts to read existing comments",
+          "desc": "Lets a template reference {{comments}}. Off by default."
+        },
+        "charLimit": {
+          "name": "Context character limit",
+          "desc": "How much note text a single prompt may carry, at most."
+        },
+        "targetLanguage": {
+          "name": "Default translation language",
+          "desc": "Used for {{targetLang}}. Leave empty to translate into the language Obsidian is displayed in."
+        },
+        "confirm": {
+          "name": "Confirm before the first send",
+          "desc": "Shows the destination and the payload size once per vault, before anything leaves your machine."
+        }
+      },
+      "prompts": {
+        "heading": "Prompts",
+        "desc": "What you can run on a highlight. Built-in prompts can be disabled or edited, never deleted — clearing your edits restores the original.",
+        "edit": "Edit",
+        "reset": "Reset",
+        "delete": "Delete",
+        "add": "New prompt",
+        "edited": "Edited",
+        "disabled": "Disabled",
+        "export": "Copy as JSON",
+        "import": "Paste JSON",
+        "exported": "Copied {{count}} prompt changes to the clipboard",
+        "exportEmpty": "You have not changed any prompts yet, so there is nothing to copy.",
+        "exportFailed": "Could not reach the clipboard. Copy the JSON from the developer console instead.",
+        "importTitle": "Paste prompt JSON",
+        "importDesc": "Replaces your prompt changes with the pasted set. Built-in prompts you have not edited are unaffected.",
+        "importPlaceholder": "Paste the JSON you copied from another vault",
+        "importButton": "Import",
+        "imported": "Imported {{count}} prompt changes",
+        "importInvalid": "That is not a valid prompt list. Expected a JSON array of objects with an id.",
+        "cancel": "Cancel"
+      },
+      "rendering": {
+        "heading": "Comment rendering",
+        "desc": "Applies to every comment in the sidebar, whether or not AI is switched on.",
+        "enable": {
+          "name": "Rich rendering",
+          "desc": "Render comments that contain code blocks, tables, lists or diagrams with Obsidian’s full markdown renderer. Off returns to plain inline formatting."
+        },
+        "mermaid": {
+          "name": "Render mermaid diagrams",
+          "desc": "Draw mermaid code blocks as diagrams. A diagram that fails to parse falls back to its source."
+        },
+        "maxHeight": {
+          "name": "Maximum diagram height",
+          "desc": "Height in pixels before a diagram is cropped in the sidebar. Click the diagram to open it full screen."
+        }
+      },
+      "streaming": {
+        "name": "Stream responses",
+        "desc": "Show the answer as it is generated. Desktop only — mobile always waits for the full response, and a stream that cannot be established falls back to one automatically.",
+        "mobile": "Not available on mobile; this device will always wait for the full response."
+      },
+      "usage": {
+        "heading": "Usage this month",
+        "desc": "Counted locally and never transmitted. Prompts and answers are not recorded — only totals.",
+        "summary": "{calls} calls · {promptTokens} prompt tokens · {completionTokens} completion tokens",
+        "none": "Nothing recorded yet this month.",
+        "reset": "Reset totals",
+        "resetDone": "Usage totals cleared"
+      }
+    },
     "detection": {
       "heading": "Detection",
       "detectHtmlComments": {
@@ -250,6 +410,57 @@
       "manualBackupSkipped": "Backup skipped. Your most recent backup is already identical."
     }
   },
+  "ai": {
+    "readiness": {
+      "disabled": "AI features are turned off. Turn them on in Settings, under AI.",
+      "noProfile": "No AI profile yet. Add one in Settings, under AI.",
+      "noBaseUrl": "This profile has no base URL.",
+      "noModel": "This profile has no model name.",
+      "noApiKey": "This profile has no API key."
+    },
+    "errors": {
+      "auth": "Authentication failed. Check the API key.",
+      "rate-limit": "The provider is rate limiting this key. Try again shortly.",
+      "quota": "The provider reports no remaining quota.",
+      "network": "Could not reach the provider. Check your connection and the base URL.",
+      "timeout": "The request timed out.",
+      "bad-request": "The provider rejected the request.",
+      "server": "The provider hit an internal error.",
+      "aborted": "Request stopped.",
+      "unknown": "The request failed.",
+      "noModelList": "{{provider}} does not support listing models."
+    },
+    "profile": {
+      "defaultName": "{{provider}} profile"
+    },
+    "prompts": {
+      "summarize": "Summarize",
+      "explain": "Explain",
+      "translate": "Translate",
+      "ask": "Ask questions",
+      "tags": "Suggest tags",
+      "diagram": "Draw a diagram",
+      "untitled": "Untitled prompt"
+    },
+    "run": {
+      "working": "Running {{name}}…",
+      "inserted": "Added as a comment",
+      "fileMissing": "That note is no longer in the vault.",
+      "emptyAnswer": "The model returned nothing to insert.",
+      "writeFailed": "Could not write to the note.",
+      "highlightMoved": "The highlight has changed since the sidebar last read it, so there is nowhere safe to attach the comment. Refresh the sidebar and try again."
+    },
+    "batch": {
+      "empty": "No highlights to run this on",
+      "starting": "Running on {count} highlights…",
+      "progress": "{done}/{total} · {current}",
+      "stop": "Stop",
+      "done": "Finished {count} highlights.",
+      "stopped": "Stopped after {count} highlights.",
+      "failures": "{count} failed: {names}",
+      "writeFailed": "The comment could not be written"
+    }
+  },
   "sidebar": {
     "title": "Highlights"
   },
@@ -280,7 +491,8 @@
   "actions": {
     "moveToCollection": "Move to...",
     "removeFromCollection": "Remove from Collection",
-    "clearSelection": "Clear selection"
+    "clearSelection": "Clear selection",
+    "aiMenu": "AI actions"
   },
   "grouping": {
     "none": "None",
@@ -489,6 +701,69 @@
       "stats": "{{collections}} Collections • {{highlights}} Collection Highlights",
       "restore": "Restore",
       "close": "Close"
+    },
+    "aiPrompt": {
+      "createTitle": "New prompt",
+      "editTitle": "Edit prompt",
+      "builtinNotice": "This is a built-in prompt. Your edits are kept as a patch, so anything you leave alone keeps improving with the plugin.",
+      "nameLabel": "Name",
+      "namePlaceholder": "Shown in the menu",
+      "iconLabel": "Icon",
+      "iconDesc": "A Lucide icon name, e.g. sparkles.",
+      "systemLabel": "System prompt",
+      "systemDesc": "Sets the model's role. Optional.",
+      "templateLabel": "Template",
+      "templateDesc": "The message sent to the model. Click a variable below to insert it.",
+      "variables": "Variables",
+      "variableGated": "needs a setting turned on",
+      "unknownVariable": "Not a variable: {{names}}. It will be sent as written.",
+      "noSelection": "A template that never references {{selection}} will not see the highlight.",
+      "outputLabel": "Output",
+      "outputPreview": "Preview only",
+      "outputComment": "Insert as a comment",
+      "outputBoth": "Preview, then choose",
+      "enabledLabel": "Show in menus",
+      "save": "Save",
+      "cancel": "Cancel",
+      "emptyTemplate": "A prompt needs a template."
+    },
+    "aiConfirm": {
+      "title": "Send to the model?",
+      "lead": "Nothing has been sent yet. This is what will leave your machine.",
+      "prompt": "Prompt",
+      "provider": "Provider",
+      "endpoint": "Endpoint",
+      "model": "Model",
+      "payload": "Payload",
+      "payloadValue": "{{chars}} characters",
+      "dontAsk": "Don't ask again for this vault",
+      "cancel": "Cancel",
+      "send": "Send"
+    },
+    "aiResult": {
+      "generating": "Generating…",
+      "stop": "Stop",
+      "answeredBy": "Answered by {{model}}",
+      "insert": "Insert as comment",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Could not reach the clipboard.",
+      "regenerate": "Regenerate",
+      "retry": "Try again",
+      "close": "Close",
+      "followUpPlaceholder": "Ask for something else…",
+      "followUpSend": "Send",
+      "unknownVariable": "This template references {{names}}, which is not a variable. It was sent as written."
+    },
+    "diagramZoom": {
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "reset": "Reset view",
+      "copySource": "Copy diagram source",
+      "copySvg": "Copy SVG",
+      "copiedSource": "Diagram source copied",
+      "copiedSvg": "SVG copied",
+      "copyFailed": "Could not copy to clipboard"
     }
   },
   "notices": {
@@ -506,5 +781,9 @@
     "highlightRemoved": "Highlight removed",
     "commentsRemoved": "Comments removed",
     "highlightAndCommentsRemoved": "Highlight and comments removed"
+  },
+  "render": {
+    "diagramError": "Diagram could not be rendered",
+    "diagramZoom": "Click to open larger"
   }
 }

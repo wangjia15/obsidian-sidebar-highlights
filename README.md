@@ -113,6 +113,26 @@ The Tasks tab collects every checkbox in the vault: `- [ ]`, `- [x]`, plus in-pr
 - See each task's context, the indented lines beneath it, without leaving the sidebar
 - Metadata written by the Tasks plugin is hidden by default, in either the Dataview or emoji style
 
+## AI
+
+Off by default. Nothing leaves your machine until you turn it on, add a provider and confirm the first send.
+
+**Settings → Sidebar Highlights → AI** configures a provider — OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, SiliconFlow, OpenRouter, or a local Ollama / LM Studio — plus any OpenAI-compatible endpoint of your own.
+
+Then, from a highlight's context menu, its sparkles button, or the command palette:
+
+- **Summarize**, **Explain**, **Translate**, **Key points**, **Ask a question**, **Diagram** — the shipped presets
+- Your own prompts, written against `{{selection}}`, `{{note}}`, `{{comments}}`, `{{tags}}` and a handful more
+- Answers preview in a panel first; insert one as a comment, copy it, ask a follow-up, or regenerate against a different provider
+
+**What gets sent**: by default, only the highlight's own text. Including the surrounding note or its existing comments are separate switches, both off. A confirmation before the first send names the exact endpoint and the exact number of characters.
+
+**Where your key lives**: in `data.json` inside your vault, in plain text — the same as every Obsidian plugin that talks to an API. It syncs wherever your vault syncs. It is deliberately kept out of the plugin's own backups.
+
+**Diagrams**: comments containing a ```mermaid block render as diagrams in the sidebar, whether an AI wrote them or you did. Click one to open it full screen. This is a display setting, and works with AI switched off.
+
+**Costs**: token totals for the current month are counted locally, under Settings → AI → Usage. Prompts and answers are never recorded.
+
 ## Settings worth knowing
 
 Everything lives under **Settings → Sidebar Highlights**.
@@ -123,6 +143,7 @@ Everything lives under **Settings → Sidebar Highlights**.
 - **Filters**: skip Excalidraw files, or include and exclude specific files and folders from scanning
 - **Display**: note titles, timestamps, date format, and a minimum character count to keep stray `==` out of the sidebar
 - **Typography** and **Styling**: font sizes and weights per element
+- **AI**: providers, prompts, what context is sent, and diagram rendering
 - **Backup and restore**: automatic backups of your collections and highlight metadata, with a retention limit
 
 ## Installation

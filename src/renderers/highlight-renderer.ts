@@ -1,6 +1,10 @@
 import { setIcon, TFile, Menu, Notice, moment } from 'obsidian';
+import type { Component } from 'obsidian';
 import type { Highlight } from '../../main';
 import type HighlightCommentsPlugin from '../../main';
+import { t } from '../i18n';
+import { isSearchOpaque, needsRichRender, RichCommentRenderer } from './rich-markdown-renderer';
+import { DiagramZoomModal } from '../modals/diagram-zoom-modal';
 
 export interface HighlightRenderOptions {
     searchTerm?: string;
@@ -18,10 +22,42 @@ export interface HighlightRenderOptions {
     onTagClick?: (tag: string) => void;
     onFileNameClick?: (filePath: string, event: MouseEvent) => void;
     onContextMenu?: (highlight: Highlight, event: MouseEvent) => void;
+    /** Present only while AI is enabled and at least one prompt is on. */
+    onAiMenu?: (highlight: Highlight, event: MouseEvent) => void;
 }
 
 export class HighlightRenderer {
-    constructor(private plugin: HighlightCommentsPlugin) {}
+    /**
+     * Created lazily: a renderer built for a view that never shows a block-level
+     * comment should not hold an IntersectionObserver.
+     */
+    private richRenderer: RichCommentRenderer | null = null;
+
+    constructor(
+        private plugin: HighlightCommentsPlugin,
+        /** The view that owns this renderer; rich renders are its children. */
+        private owner?: Component
+    ) {}
+
+    /** Rich rendering is a display feature, so it works with AI switched off. */
+    private get richEnabled(): boolean {
+        return this.plugin.settings.ai.renderRichContent && this.owner != null;
+    }
+
+    private getRichRenderer(): RichCommentRenderer {
+        this.richRenderer ??= new RichCommentRenderer(this.plugin.app, this.owner!);
+        return this.richRenderer;
+    }
+
+    /** Called by the view when it rebuilds the list, and when it unloads. */
+    releaseDetachedRenders(): void {
+        this.richRenderer?.releaseDetached();
+    }
+
+    disposeRichRenders(): void {
+        this.richRenderer?.dispose();
+        this.richRenderer = null;
+    }
 
     private createFileContextMenu(file: TFile): Menu {
         const menu = new Menu();
@@ -360,7 +396,20 @@ export class HighlightRenderer {
     }
 
     private addActionButtons(actions: HTMLElement, highlight: Highlight, options: HighlightRenderOptions): void {
-        actions.createDiv({ cls: 'comment-buttons' });
+        const buttons = actions.createDiv({ cls: 'comment-buttons' });
+
+        if (options.onAiMenu) {
+            const aiButton = buttons.createDiv({
+                cls: 'highlight-action-button highlight-ai-button',
+                attr: { 'aria-label': t('actions.aiMenu'), role: 'button', tabindex: '0' }
+            });
+            setIcon(aiButton, 'sparkles');
+            aiButton.addEventListener('click', (event) => {
+                // The card itself navigates on click; this button must not.
+                event.stopPropagation();
+                options.onAiMenu?.(highlight, event);
+            });
+        }
     }
 
     private createCommentsSection(item: HTMLElement, highlight: Highlight, options: HighlightRenderOptions): void {
@@ -375,7 +424,7 @@ export class HighlightRenderer {
             if (validFootnoteContents.length > 0) {
                 validFootnoteContents.forEach((content, index) => {
                     const commentDiv = commentsContainer.createDiv({ cls: 'highlight-comment' });
-                    this.renderMarkdownToElement(commentDiv, content);
+                    this.renderCommentContent(commentDiv, content, highlight);
                     commentDiv.addEventListener('click', (event) => {
                         event.stopPropagation();
                         options.onCommentClick?.(highlight, index, event);
@@ -389,6 +438,31 @@ export class HighlightRenderer {
         // Add "Add Comment" line for all highlights (regular and native comments)
         // For native comments, it will be disabled/greyed out
         this.createAddCommentLine(commentsContainer, highlight, options);
+    }
+
+    /**
+     * Picks the renderer for one comment.
+     *
+     * Only comments that actually contain a block construct go through
+     * Obsidian's full pipeline; everything else keeps the flat, fast path that
+     * search highlighting is built around.
+     */
+    private renderCommentContent(commentDiv: HTMLElement, content: string, highlight: Highlight): void {
+        if (!this.richEnabled || !needsRichRender(content)) {
+            this.renderMarkdownToElement(commentDiv, content);
+            return;
+        }
+
+        this.getRichRenderer().render(commentDiv, content, {
+            sourcePath: highlight.filePath,
+            renderMermaid: this.plugin.settings.ai.renderMermaid,
+            maxDiagramHeight: this.plugin.settings.ai.maxDiagramHeight,
+            diagramErrorLabel: t('render.diagramError'),
+            zoomLabel: t('render.diagramZoom'),
+            onZoom: (svg, source) => {
+                new DiagramZoomModal(this.plugin.app, svg, source).open();
+            }
+        });
     }
 
     private createAddCommentLine(commentsContainer: HTMLElement, highlight: Highlight, options: HighlightRenderOptions): void {
@@ -418,6 +492,10 @@ export class HighlightRenderer {
         const nodesToProcess: Text[] = [];
         
         while ((node = walker.nextNode()) !== null) {
+            // Rich-rendered comments contain SVG, code and math. Wrapping a
+            // span around text inside those breaks the drawing or corrupts
+            // what is meant to be verbatim, so they are skipped entirely.
+            if (isSearchOpaque(node)) continue;
             if (node.nodeValue && node.nodeValue.trim() !== '' && 
                 !(node.parentElement && node.parentElement.classList.contains('search-term-highlight'))) {
                 nodesToProcess.push(node as Text);
