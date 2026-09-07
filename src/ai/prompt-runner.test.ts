@@ -22,6 +22,7 @@ const PROMPT: PromptPreset = {
     name: 'Test prompt',
     template: 'Selection: {{selection}}\nNote: {{note}}',
     builtin: false,
+    scope: 'highlight',
     enabled: true,
     outputTarget: 'both',
     sortOrder: 0

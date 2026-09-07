@@ -5,6 +5,7 @@ import type HighlightCommentsPlugin from '../../main';
 import { t } from '../i18n';
 import { isSearchOpaque, needsRichRender, RichCommentRenderer } from './rich-markdown-renderer';
 import { DiagramZoomModal } from '../modals/diagram-zoom-modal';
+import { isRecolorable } from '../utils/highlight-markup';
 
 export interface HighlightRenderOptions {
     searchTerm?: string;
@@ -132,6 +133,11 @@ export class HighlightRenderer {
                 item.classList.add('highlight-color-custom');
                 item.style.setProperty('--highlight-color', highlightColor);
             }
+
+            // The colour a card is tinted with when nothing is selected. Set as a
+            // concrete value rather than left to the class, so a card reads as
+            // its own colour at a glance instead of only once it is clicked.
+            item.style.setProperty('--sh-card-color', highlightColor);
         }
 
         if (this.plugin.selectedHighlightId === highlight.id) {
@@ -816,9 +822,24 @@ export class HighlightRenderer {
     }
 
     private isColorChangeable(highlight: Highlight): boolean {
-        // Only allow color changes for regular markdown highlights (==text==) and native comments (%%text%%)
-        // Don't allow for HTML highlights (<font>, <span>, <mark>)
-        return !this.isHtmlHighlight(highlight);
+        // Markdown highlights (==text==) and native comments (%%text%%) always.
+        // Of the HTML forms, only a <mark> can be recoloured: that is the one
+        // this plugin writes, and rewriting a <span> or <font> would mean
+        // guessing at whichever plugin produced it.
+        if (!this.isHtmlHighlight(highlight)) return true;
+        return isRecolorable(this.highlightMarkup(highlight));
+    }
+
+    /**
+     * The highlight's own source markup. Custom patterns keep it verbatim;
+     * for the rest it is reconstructed from the text, which is all the
+     * recolouring check needs.
+     */
+    private highlightMarkup(highlight: Highlight): string {
+        if (highlight.fullMatch) return highlight.fullMatch;
+        return highlight.color
+            ? `<mark style="background: ${highlight.color};">${highlight.text}</mark>`
+            : `==${highlight.text}==`;
     }
 
     private isHtmlHighlight(highlight: Highlight): boolean {
@@ -843,8 +864,10 @@ export class HighlightRenderer {
             { name: 'green', value: this.plugin.settings.customColors.green }
         ];
 
-        // Add default gray option for native comments
-        if (highlight.isNativeComment) {
+        // Clearing the colour is only an action when there is one to clear:
+        // it returns a coloured `<mark>` in the note to plain `==text==`, and a
+        // native comment to its neutral grey.
+        if (highlight.isNativeComment || highlight.color) {
             colors.push({ name: 'default', value: '' });
         }
 

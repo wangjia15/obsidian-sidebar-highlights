@@ -1,18 +1,29 @@
 import { App, Component, Modal, Notice, setIcon } from 'obsidian';
 import type HighlightCommentsPlugin from '../../main';
-import type { Highlight } from '../../main';
 import { t } from '../i18n';
 import { describeAiError } from '../ai/ai-service';
-import { preparePromptRun, type PreparedRun } from '../ai/prompt-runner';
+import { type PreparedRun } from '../ai/prompt-runner';
 import type { AiMessage, AiProfile, AiResult, PromptPreset } from '../ai/types';
 import { needsRichRender, RichCommentRenderer } from '../renderers/rich-markdown-renderer';
 import { DiagramZoomModal } from './diagram-zoom-modal';
 
+/**
+ * What the answer is about, stated as a note path and a way to build the
+ * request again. Keeping it this narrow is what lets one preview panel serve
+ * both a highlight prompt and a whole-note one.
+ */
+export interface AiResultSource {
+    /** The note, so links and embeds in the answer resolve from the right place. */
+    sourcePath: string;
+    /** Rebuilds the request for a regenerate, against whichever profile is picked. */
+    prepare(profile: AiProfile): Promise<PreparedRun>;
+}
+
 export interface AiResultModalOptions {
     /** Called when the user accepts the answer. Returns false to keep the modal open. */
     onInsert?: (text: string) => Promise<boolean>;
-    /** Extra instruction typed when launching, carried into regenerate. */
-    input?: string;
+    /** Label for the accept button; defaults to "Insert as comment". */
+    insertLabel?: string;
 }
 
 /**
@@ -48,7 +59,7 @@ export class AiResultModal extends Modal {
         app: App,
         private readonly plugin: HighlightCommentsPlugin,
         private readonly prompt: PromptPreset,
-        private readonly highlight: Highlight,
+        private readonly source: AiResultSource,
         private readonly prepared: PreparedRun,
         private readonly options: AiResultModalOptions = {}
     ) {
@@ -166,7 +177,7 @@ export class AiResultModal extends Modal {
             this.rich ??= new RichCommentRenderer(this.app, this.component);
             const target = this.bodyEl.createDiv();
             this.rich.render(target, this.result, {
-                sourcePath: this.highlight.filePath,
+                sourcePath: this.source.sourcePath,
                 renderMermaid: settings.renderMermaid,
                 maxDiagramHeight: settings.maxDiagramHeight,
                 diagramErrorLabel: t('render.diagramError'),
@@ -286,8 +297,11 @@ export class AiResultModal extends Modal {
     private renderFooter(): void {
         this.footerEl.empty();
 
-        if (this.prompt.outputTarget !== 'preview' && this.options.onInsert) {
-            const insert = this.footerEl.createEl('button', { text: t('modals.aiResult.insert'), cls: 'mod-cta' });
+        if (this.options.onInsert) {
+            const insert = this.footerEl.createEl('button', {
+                text: this.options.insertLabel ?? t('modals.aiResult.insert'),
+                cls: 'mod-cta'
+            });
             insert.addEventListener('click', () => { void this.insert(insert); });
         }
 
@@ -322,10 +336,7 @@ export class AiResultModal extends Modal {
     private async regenerate(): Promise<void> {
         this.controller?.abort();
         try {
-            const prepared = await preparePromptRun(this.plugin, this.prompt, this.highlight, {
-                input: this.options.input,
-                profile: this.profile
-            });
+            const prepared = await this.source.prepare(this.profile);
             this.conversation = [...prepared.messages];
         } catch {
             // The highlight or its note may be gone; fall back to what we sent

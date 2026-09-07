@@ -2,7 +2,13 @@ import { TFile } from 'obsidian';
 import { i18n } from '../i18n';
 import type HighlightCommentsPlugin from '../../main';
 import type { Highlight } from '../../main';
-import { buildVariables, payloadSize, type ContextSource } from './context-builder';
+import {
+    buildNoteVariables,
+    buildVariables,
+    payloadSize,
+    type ContextSource,
+    type NoteContextSource
+} from './context-builder';
 import { buildMessages, type InterpolationResult } from './prompt-library';
 import { providerLabel } from './registry';
 import type { AiMessage, AiProfile, PromptPreset } from './types';
@@ -56,6 +62,35 @@ export async function collectContextSource(
     }
 
     return source;
+}
+
+/**
+ * Everything a whole-note prompt reads, gathered from the vault.
+ *
+ * The note text is read unconditionally, unlike the highlight path: see
+ * `buildNoteVariables` for why running a document prompt is itself the decision
+ * to send the document.
+ */
+export async function collectNoteSource(
+    plugin: HighlightCommentsPlugin,
+    file: TFile
+): Promise<NoteContextSource> {
+    return {
+        noteContent: await plugin.app.vault.cachedRead(file),
+        noteTitle: file.basename,
+        filePath: file.path,
+        // Document order, which is the order the note makes its points in and
+        // the only order a list of passages reads sensibly in.
+        highlights: [...(plugin.highlights.get(file.path) ?? [])]
+            .sort((a, b) => a.startOffset - b.startOffset)
+            .map(highlight => ({
+                text: highlight.text,
+                // Not gated on includeExistingComments: the note text being
+                // sent alongside already contains every footnote definition, so
+                // withholding the list would hide nothing.
+                comments: highlight.footnoteContents?.filter(comment => comment.trim() !== '')
+            }))
+    };
 }
 
 function resolveCollectionNames(plugin: HighlightCommentsPlugin, highlight: Highlight): string[] {
@@ -112,5 +147,49 @@ export async function preparePromptRun(
             baseUrl: profile.baseUrl,
             model: profile.model
         }
+    };
+}
+
+export interface PreparedNoteRun extends PreparedRun {
+    file: TFile;
+    /** True when the note was longer than the limit and only part of it is going. */
+    truncated: boolean;
+}
+
+/** The whole-note counterpart of preparePromptRun. */
+export async function prepareNotePromptRun(
+    plugin: HighlightCommentsPlugin,
+    prompt: PromptPreset,
+    file: TFile,
+    options: RunOptions = {}
+): Promise<PreparedNoteRun> {
+    const settings = plugin.settings.ai;
+    const profile = options.profile ?? plugin.aiService.getActiveProfile();
+    if (!profile) {
+        throw new Error('No AI profile is configured');
+    }
+
+    const source = await collectNoteSource(plugin, file);
+    const variables = buildNoteVariables(source, settings, {
+        input: options.input,
+        targetLanguage: options.targetLanguage,
+        fallbackLanguage: uiLanguageName(i18n.getLocale())
+    });
+
+    const { messages, interpolation } = buildMessages(prompt, variables);
+
+    return {
+        prompt,
+        profile,
+        messages,
+        interpolation,
+        payloadChars: payloadSize(messages),
+        destination: {
+            provider: providerLabel(profile),
+            baseUrl: profile.baseUrl,
+            model: profile.model
+        },
+        file,
+        truncated: source.noteContent.length > Math.max(0, settings.noteCharLimit)
     };
 }

@@ -123,6 +123,33 @@ export function removeFootnoteDefinition(content: string, key: string): string {
     return kept.join('\n');
 }
 
+/**
+ * Every definition's span in character offsets, in document order.
+ *
+ * For callers that need to know which parts of the note are footnote text
+ * rather than prose — writing new markup into a definition would break the
+ * footnote instead of marking anything. Shares the scanner above so the
+ * continuation rules cannot drift from how definitions are read and deleted.
+ */
+export function footnoteDefinitionRanges(content: string): { start: number; end: number }[] {
+    const lines = content.split('\n');
+    const cleanLines = lines.map(line => line.replace(/\r$/, ''));
+
+    // Offsets are line starts in the original text, so the '\n' each split
+    // removed has to be counted back in.
+    const lineStarts: number[] = [];
+    let offset = 0;
+    for (const line of lines) {
+        lineStarts.push(offset);
+        offset += line.length + 1;
+    }
+
+    return scanDefinitionSpans(cleanLines).map(span => ({
+        start: lineStarts[span.startLine],
+        end: lineStarts[span.endLine] + cleanLines[span.endLine].length
+    }));
+}
+
 export interface DefinitionOffsets {
     /** Offset of the `[^key]:` line start. */
     start: number;

@@ -23,6 +23,10 @@ Collect every highlight, comment and task in your vault into one sidebar, then f
 
 Select text and choose **Create highlight** from the right-click menu, or run it from the command palette and give it a hotkey. Typing the syntax by hand works just as well.
 
+The right-click entry opens onto the palette, so a highlight can be given its color as it's made — pick one of your five colors, or **Default color** for the plain one.
+
+A color goes into the note itself. **Default color** writes `==text==`; a color writes `<mark style="background: #ffd700;">text</mark>`, so the note shows that color in the editor, in reading view, and anywhere else it's read. The sidebar's own color picker rewrites the same markup, and clearing a color turns the `<mark>` back into plain `==text==`. Markup this plugin didn't write — a `<span>`, a `<font>`, another plugin's pattern — is never rewritten; a color set on one of those is remembered by the plugin instead, as before.
+
 | Syntax | Notes |
 | --- | --- |
 | `==text==` | Standard markdown highlight |
@@ -31,7 +35,7 @@ Select text and choose **Create highlight** from the right-click menu, or run it
 | `<span style="background:yellow">text</span>` | Background color is read from the style |
 | `%%text%%` | A native Obsidian comment, shown in the sidebar in its own right |
 
-Hover a highlight in the sidebar to reveal its color picker. Your own names for the five palette colors live in **Settings → Color names**, and those names are what the color filter shows.
+In the sidebar, every card carries its highlight's color without being clicked: a wide colored left edge and a faint wash of the same color across the card. Hover the left edge to reveal its color picker. Your own names for the five palette colors live in **Settings → Color names**, and those names are what the color filter shows.
 
 ## Comments
 
@@ -103,6 +107,26 @@ Collections gather related highlights from anywhere in the vault.
 2. **Add** highlights with the collection button on any highlight
 3. **Jump** straight to one from the command palette, where each collection gets its own command as you create it
 
+### Excalidraw mindmaps
+
+**Export to Excalidraw mindmap**, in the overflow menu, draws what the tab is showing as an Excalidraw file. The note title is the root, its headings nest underneath by level, every highlight hangs off the heading it sits under, and each comment hangs off its highlight. Highlight nodes are filled with their own color, and comments with a lighter wash of the same one, so the map carries the color coding the sidebar shows.
+
+Filters count: narrow to one color or one tag first and the drawing holds only those. The command palette has the same export scoped to the current note.
+
+The file is a normal `.excalidraw.md`, editable in the [Excalidraw plugin](https://github.com/zsviczian/obsidian-excalidraw-plugin) like any drawing you made by hand. It's also a real mind map to that plugin's **Mindmap Builder** script, not just a picture of one: the script can select the root, add branches, re-run its auto-layout, fold subtrees and recolour the map exactly as if it had drawn it.
+
+**Getting back to the note.** Every shape carries an Obsidian link to where it came from, which Excalidraw shows as a small link badge in its corner — click it and you land on that heading in the note. A heading node links to its heading, a highlight and its comments link to the heading they sit under, and the root links to the note itself.
+
+**Side by side.** A mindmap opens in a split pane next to the note by default, as a drawing rather than as the markdown it's stored in, so you can read note and map together. **Settings → Export** turns that off if you'd rather have a new tab.
+
+**Refreshing.** Exporting the same scope again refreshes the map you already have instead of leaving a second copy beside it, and the menu entry says which it's about to do. The sidebar toolbar grows a refresh button once a map exists, and **Refresh Excalidraw mindmap** in the command palette does the same from either side — with the drawing open it redraws itself, with the note open it redraws that note's map. **Refresh mindmaps automatically**, in Settings → Export, does it for you a couple of seconds after highlights or comments change.
+
+A refresh redraws the whole map: positions, and anything you added inside the drawing by hand, are replaced. What survives is each node's identity — a node still in the same place under the same heading keeps its element id, so `^id` links into the drawing keep working. Close the drawing before refreshing it, or reopen it afterwards to see the new version.
+
+A drawing this plugin didn't make is never overwritten: the export goes to a free name beside it instead.
+
+**Settings → Export** chooses where it's saved and whether comments are drawn.
+
 ## Tasks
 
 The Tasks tab collects every checkbox in the vault: `- [ ]`, `- [x]`, plus in-progress `- [/]`, cancelled `- [-]` and question `- [?]`.
@@ -119,13 +143,29 @@ Off by default. Nothing leaves your machine until you turn it on, add a provider
 
 **Settings → Sidebar Highlights → AI** configures a provider — OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, SiliconFlow, OpenRouter, or a local Ollama / LM Studio — plus any OpenAI-compatible endpoint of your own.
 
-Then, from a highlight's context menu, its sparkles button, or the command palette:
+### One highlight
+
+From a highlight's context menu, its sparkles button, or the command palette:
 
 - **Summarize**, **Explain**, **Translate**, **Key points**, **Ask a question**, **Diagram** — the shipped presets
 - Your own prompts, written against `{{selection}}`, `{{note}}`, `{{comments}}`, `{{tags}}` and a handful more
 - Answers preview in a panel first; insert one as a comment, copy it, ask a follow-up, or regenerate against a different provider
 
-**What gets sent**: by default, only the highlight's own text. Including the surrounding note or its existing comments are separate switches, both off. A confirmation before the first send names the exact endpoint and the exact number of characters.
+Right-clicking inside a highlight in the editor offers **AI comment on this highlight**, listing the same prompts. Picked from there, the answer skips the preview and goes straight in as a comment — you asked for a comment by choosing the prompt at the text.
+
+### The whole note
+
+The sparkles button on the sidebar toolbar runs a prompt against the entire document rather than one highlight. Three ship with it:
+
+- **Summarize the note** — what it is about, then its points in the order it makes them. Opens in a preview panel; keep it in the note or just read it.
+- **Extract and highlight** — the model picks out the passages worth highlighting and they are marked *in place*, so they appear in the sidebar like any highlight you made yourself, ready to comment on, colour and collect. Give them their own colour under Settings → AI to tell them from your own at a glance.
+- **Outline the note** — a nested outline, written into the note under its own heading. Running it again replaces that section rather than stacking a second one.
+
+Extraction never writes the model's words into your note. Each passage is located in the text as it already stands and only the `==` markers are added around it; a passage the model paraphrased rather than quoted cannot be found, so it is reported and skipped instead of being inserted. Code blocks, frontmatter, existing highlights and your comments are all left alone.
+
+Whole-note prompts are as customizable as the rest. In the prompt editor, **Runs on** switches a prompt between one highlight and the whole note, which changes both the variables it can use — `{{note}}`, `{{noteTitle}}`, `{{highlights}}` — and where its answer may go: preview, written into the note, or used to mark passages. So "extract every definition", "extract anything I disagree with" or "list the open questions as a section" are all a prompt you write once.
+
+**What gets sent**: for a highlight prompt, by default only the highlight's own text — including the surrounding note or its existing comments are separate switches, both off. A whole-note prompt sends the note, because that is what it is for; the amount is capped by **Whole-note character limit** and you are told when a note was longer than that. Either way, a confirmation before the first send names the exact endpoint and the exact number of characters.
 
 **Where your key lives**: in `data.json` inside your vault, in plain text — the same as every Obsidian plugin that talks to an API. It syncs wherever your vault syncs. It is deliberately kept out of the plugin's own backups.
 
@@ -143,6 +183,7 @@ Everything lives under **Settings → Sidebar Highlights**.
 - **Filters**: skip Excalidraw files, or include and exclude specific files and folders from scanning
 - **Display**: note titles, timestamps, date format, and a minimum character count to keep stray `==` out of the sidebar
 - **Typography** and **Styling**: font sizes and weights per element
+- **Export**: where Excalidraw mindmaps are saved, and whether comments appear in them
 - **AI**: providers, prompts, what context is sent, and diagram rendering
 - **Backup and restore**: automatic backups of your collections and highlight metadata, with a retention limit
 

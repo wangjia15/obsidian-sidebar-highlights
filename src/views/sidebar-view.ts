@@ -29,9 +29,11 @@ import {
     joinTaskEntries
 } from '../utils/copy-format';
 import { HtmlHighlightParser } from '../utils/html-highlight-parser';
+import { locateHighlight } from '../ai/comment-writer';
 import { DateSuggest } from '../utils/date-suggest';
 import { t } from '../i18n';
 import { addAiMenuItems, aiAvailable, showAiMenu } from './ai-actions';
+import { noteAiAvailable, showNoteAiMenu } from './note-ai-actions';
 
 // Private Obsidian APIs used by the sidebar (not part of the public typings).
 interface PrivateCommandsApi {
@@ -72,6 +74,8 @@ export class HighlightsSidebarView extends ItemView {
     private selectedHighlightIds: Set<string> = new Set(); // Multi-select for highlights
     private actionsButton: HTMLElement | null = null; // Actions menu button for multi-select
     private collectionNavButton: HTMLElement | null = null; // Collection navigation button
+    private mindmapRefreshButton: HTMLElement | null = null; // Refresh the Excalidraw mindmap for this tab's scope
+    private noteAiButton: HTMLElement | null = null; // Whole-note AI prompts for the active note
     private viewMode: 'current' | 'folder' | 'all' | 'collections' | 'tasks' = 'current';
     private currentCollectionId: string | null = null;
     private taskManager: TaskManager;
@@ -902,6 +906,40 @@ export class HighlightsSidebarView extends ItemView {
                 this.showActionsMenu(event);
             });
 
+            // Refresh the Excalidraw mindmap for whatever this tab is showing.
+            // Only present once a map exists — until then the action lives in
+            // the overflow menu as "export", where a one-off belongs.
+            this.mindmapRefreshButton = searchContainer.createEl('button', {
+                cls: 'highlights-group-button highlights-mindmap-refresh-button',
+                attr: { 'data-action': 'refresh-mindmap' }
+            });
+            setTooltip(this.mindmapRefreshButton, t('toolbar.syncExcalidrawButton'));
+            setIcon(this.mindmapRefreshButton, 'refresh-cw');
+            this.mindmapRefreshButton.addEventListener('click', () => {
+                void this.exportVisibleHighlightsToExcalidraw();
+            });
+            this.updateMindmapRefreshButton();
+
+            // Whole-note AI: summarize the note, outline it, or have the
+            // passages worth highlighting picked out and marked. Separate from
+            // the AI on a highlight card because the subject is different —
+            // this one never needs a highlight to exist first.
+            this.noteAiButton = searchContainer.createEl('button', {
+                cls: 'highlights-group-button highlights-note-ai-button',
+                attr: { 'data-action': 'note-ai' }
+            });
+            setTooltip(this.noteAiButton, t('toolbar.noteAi'));
+            setIcon(this.noteAiButton, 'sparkles');
+            this.noteAiButton.addEventListener('click', (event) => {
+                const file = this.plugin.app.workspace.getActiveFile();
+                if (!file) {
+                    new Notice(t('notices.noActiveFile'));
+                    return;
+                }
+                showNoteAiMenu(this.plugin, file, event);
+            });
+            this.updateNoteAiButton();
+
             // Overflow ("more") menu — secondary actions, parked at the far right
             // of the toolbar. Holds follow-scroll, revert colors, copy visible.
             const overflowMenuButton = searchContainer.createEl('button', {
@@ -1489,6 +1527,12 @@ export class HighlightsSidebarView extends ItemView {
         if (this.collectionNavButton) {
             this.updateCollectionNavButton(this.collectionNavButton);
         }
+
+        // Whether a mindmap exists depends on the tab and the active note, both
+        // of which may have just changed. So does whether there is a note for
+        // the whole-note AI button to act on.
+        this.updateMindmapRefreshButton();
+        this.updateNoteAiButton();
 
         // Restore scroll position after DOM rebuild
         this.restoreScrollPosition();
@@ -4701,13 +4745,54 @@ export class HighlightsSidebarView extends ItemView {
     }
 
 
+    /**
+     * The editor showing a note, opening it when it is not on screen yet.
+     *
+     * Resolving by path rather than by whatever happens to be active is what
+     * makes the sidebar's own actions work: clicking a button in the sidebar
+     * makes the sidebar the active leaf, so `getActiveViewOfType(MarkdownView)`
+     * is null exactly when the user is using the sidebar. It also covers the
+     * All notes and Collections tabs, where the highlight's note may not be
+     * open at all.
+     */
+    private async resolveEditorFor(filePath: string): Promise<MarkdownView | null> {
+        const open = this.findOpenMarkdownView(filePath, true);
+        if (open?.editor) return open;
+
+        const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+        if (!(file instanceof TFile)) return null;
+
+        await this.plugin.app.workspace.openLinkText(filePath, filePath, false);
+
+        // openLinkText resolves before the new view has finished mounting its
+        // editor, so the first look can still come up empty.
+        return new Promise<MarkdownView | null>((resolve) => {
+            let attempts = 20;
+            const check = () => {
+                const view = this.findOpenMarkdownView(filePath, false);
+                if (view?.editor) {
+                    resolve(view);
+                    return;
+                }
+                if (attempts-- <= 0) {
+                    resolve(null);
+                    return;
+                }
+                window.setTimeout(check, 50);
+            };
+            check();
+        });
+    }
+
     private async addFootnoteToHighlightWithTargetedUpdate(highlight: Highlight) {
-        const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeView) return;
+        const activeView = await this.resolveEditorFor(highlight.filePath);
+        if (!activeView?.file) {
+            new Notice(t('notices.commentNeedsEditor'));
+            return;
+        }
 
         const editor = activeView.editor;
         const file = activeView.file;
-        if (!file) return;
 
         // Find the highlight in the editor content
         const content = editor.getValue();
@@ -4964,8 +5049,10 @@ export class HighlightsSidebarView extends ItemView {
     }
 
     private async updateSingleHighlightFromEditor(highlight: Highlight, file: TFile) {
-        // Re-parse just this highlight from the current editor content
-        const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+        // Re-parse just this highlight from the editor showing its own note —
+        // not from whatever is active, which after an insert may be the sidebar
+        // or another tab entirely.
+        const activeView = this.findOpenMarkdownView(file.path, false);
         if (!activeView) return;
 
         const content = activeView.editor.getValue();
@@ -4992,94 +5079,115 @@ export class HighlightsSidebarView extends ItemView {
     }
 
     private findAndParseHighlight(content: string, originalHighlight: Highlight, footnoteMap: Map<string, string>): Highlight | null {
-        // This is a simplified version - we're looking for the same highlight text and updating its footnotes
-        const regex = originalHighlight.isNativeComment ? 
-            new RegExp(`%%${this.escapeRegex(originalHighlight.text)}%%`, 'g') :
-            new RegExp(`==${this.escapeRegex(originalHighlight.text)}==`, 'g');
-        
-        let match;
-        while ((match = regex.exec(content)) !== null) {
-            // Check if this is likely the same highlight (same position roughly)
-            if (Math.abs(match.index - originalHighlight.startOffset) < 100) { // Within 100 characters
-                // Parse footnotes for this highlight using same logic as main parsing
-                const afterHighlight = content.slice(match.index + match[0].length);
-                
-                // Find all footnotes (both standard and inline) in order
-                const allFootnotes: Array<{type: 'standard' | 'inline', index: number, content: string}> = [];
-                
-                // First, get all inline footnotes with their positions
-                const inlineFootnotes = this.plugin.inlineFootnoteManager.extractInlineFootnotes(content, match.index + match[0].length);
-                inlineFootnotes.forEach(footnote => {
-                    if (footnote.content.trim()) {
+        // Every form the highlight might be written in — `==text==`, a native
+        // comment, a `<mark>`, a custom pattern — so a coloured highlight is
+        // found here too and its card picks up the comment just added to it.
+        const location = locateHighlight(content, originalHighlight);
+        if (!location) return null;
+
+        // This runs immediately after an edit we made, so the highlight has
+        // barely moved; anything further off is a different occurrence.
+        if (Math.abs(location.matchStart - originalHighlight.startOffset) >= 100) return null;
+
+        const highlightEnd = location.matchEnd;
+
+        // Parse footnotes for this highlight using same logic as main parsing
+        const afterHighlight = content.slice(highlightEnd);
+
+        // Find all footnotes (both standard and inline) in order
+        const allFootnotes: Array<{type: 'standard' | 'inline', index: number, content: string}> = [];
+
+        // First, get all inline footnotes with their positions
+        const inlineFootnotes = this.plugin.inlineFootnoteManager.extractInlineFootnotes(content, highlightEnd);
+        inlineFootnotes.forEach(footnote => {
+            if (footnote.content.trim()) {
+                allFootnotes.push({
+                    type: 'inline',
+                    index: footnote.startIndex,
+                    content: footnote.content.trim()
+                });
+            }
+        });
+
+        // Then, get all standard footnotes with their positions (using same validation logic)
+        const standardFootnoteRegex = new RegExp(STANDARD_FOOTNOTE_REGEX);
+        let stdMatch;
+        let lastValidPosition = 0;
+
+        while ((stdMatch = standardFootnoteRegex.exec(afterHighlight)) !== null) {
+            // Check if this standard footnote is in a valid position
+            const precedingText = afterHighlight.substring(lastValidPosition, stdMatch.index);
+            const isValid = FOOTNOTE_VALIDATION_REGEX.test(precedingText);
+
+            if (stdMatch.index === lastValidPosition || isValid) {
+                const key = stdMatch[2]; // The key inside [^key]
+                if (footnoteMap.has(key)) {
+                    const fnContent = footnoteMap.get(key)!.trim();
+                    if (fnContent) { // Only add non-empty content
                         allFootnotes.push({
-                            type: 'inline',
-                            index: footnote.startIndex,
-                            content: footnote.content.trim()
+                            type: 'standard',
+                            index: highlightEnd + stdMatch.index,
+                            content: fnContent
                         });
                     }
-                });
-                
-                // Then, get all standard footnotes with their positions (using same validation logic)
-                const standardFootnoteRegex = new RegExp(STANDARD_FOOTNOTE_REGEX);
-                let stdMatch;
-                let lastValidPosition = 0;
+                }
+                lastValidPosition = stdMatch.index + stdMatch[0].length;
+            } else {
+                // Stop if we encounter a footnote that's not in the valid sequence
+                break;
+            }
+        }
 
-                while ((stdMatch = standardFootnoteRegex.exec(afterHighlight)) !== null) {
-                    // Check if this standard footnote is in a valid position
-                    const precedingText = afterHighlight.substring(lastValidPosition, stdMatch.index);
-                    const isValid = FOOTNOTE_VALIDATION_REGEX.test(precedingText);
-                    
-                    if (stdMatch.index === lastValidPosition || isValid) {
-                        const key = stdMatch[2]; // The key inside [^key]
-                        if (footnoteMap.has(key)) {
-                            const fnContent = footnoteMap.get(key)!.trim();
-                            if (fnContent) { // Only add non-empty content
-                                allFootnotes.push({
-                                    type: 'standard',
-                                    index: match.index + match[0].length + stdMatch.index,
-                                    content: fnContent
-                                });
-                            }
-                        }
-                        lastValidPosition = stdMatch.index + stdMatch[0].length;
-                    } else {
-                        // Stop if we encounter a footnote that's not in the valid sequence
-                        break;
+        // Check for adjacent comment after the highlight and its footnotes
+        // Calculate where footnotes end
+        const afterHighlightFull = content.substring(highlightEnd);
+        const footnoteLength = InlineFootnoteManager.calculateFootnoteLength(afterHighlightFull);
+        const afterFootnotes = afterHighlightFull.substring(footnoteLength);
+
+        // Only check for adjacent comments if there are no blank lines
+        // A blank line (two or more newlines with optional whitespace between) breaks adjacency
+        const hasBlankLine = /\n\s*\n/.test(afterFootnotes);
+
+        // Check for adjacent native comment (%% %%) only if no blank lines
+        if (!hasBlankLine) {
+            const nativeCommentMatch = afterFootnotes.match(/^\s*(%%([^%](?:[^%]|%[^%])*?)%%)/);
+            if (nativeCommentMatch) {
+                const commentText = nativeCommentMatch[2];
+                const commentPosition = highlightEnd + footnoteLength + nativeCommentMatch.index!;
+                if (commentText.trim()) {
+                    allFootnotes.push({
+                        type: 'inline',
+                        index: commentPosition,
+                        content: commentText.trim()
+                    });
+                }
+            }
+
+            // Check for adjacent HTML comment (<!-- -->)
+            if (this.plugin.settings.detectHtmlComments) {
+                const htmlCommentMatch = afterFootnotes.match(/^\s*(<!--([^]*?)-->)/);
+                if (htmlCommentMatch) {
+                    const commentText = htmlCommentMatch[2];
+                    const commentPosition = highlightEnd + footnoteLength + htmlCommentMatch.index!;
+                    if (commentText.trim()) {
+                        allFootnotes.push({
+                            type: 'inline',
+                            index: commentPosition,
+                            content: commentText.trim()
+                        });
                     }
                 }
-                
-                // Check for adjacent comment after the highlight and its footnotes
-                // Calculate where footnotes end
-                const highlightEnd = match.index + match[0].length;
-                const afterHighlightFull = content.substring(highlightEnd);
-                const footnoteLength = InlineFootnoteManager.calculateFootnoteLength(afterHighlightFull);
-                const afterFootnotes = afterHighlightFull.substring(footnoteLength);
+            }
 
-                // Only check for adjacent comments if there are no blank lines
-                // A blank line (two or more newlines with optional whitespace between) breaks adjacency
-                const hasBlankLine = /\n\s*\n/.test(afterFootnotes);
-
-                // Check for adjacent native comment (%% %%) only if no blank lines
-                if (!hasBlankLine) {
-                    const nativeCommentMatch = afterFootnotes.match(/^\s*(%%([^%](?:[^%]|%[^%])*?)%%)/);
-                    if (nativeCommentMatch) {
-                        const commentText = nativeCommentMatch[2];
-                        const commentPosition = highlightEnd + footnoteLength + nativeCommentMatch.index!;
-                        if (commentText.trim()) {
-                            allFootnotes.push({
-                                type: 'inline',
-                                index: commentPosition,
-                                content: commentText.trim()
-                            });
-                        }
-                    }
-
-                    // Check for adjacent HTML comment (<!-- -->)
-                    if (this.plugin.settings.detectHtmlComments) {
-                        const htmlCommentMatch = afterFootnotes.match(/^\s*(<!--([^]*?)-->)/);
-                        if (htmlCommentMatch) {
-                            const commentText = htmlCommentMatch[2];
-                            const commentPosition = highlightEnd + footnoteLength + htmlCommentMatch.index!;
+            // Check for adjacent custom pattern comments
+            for (const customPattern of this.plugin.settings.customPatterns) {
+                if (customPattern.type === 'comment') {
+                    try {
+                        const customRegex = new RegExp('^\\s*(' + customPattern.pattern + ')');
+                        const customMatch = afterFootnotes.match(customRegex);
+                        if (customMatch && customMatch[2]) { // customMatch[2] should be the captured group
+                            const commentText = customMatch[2];
+                            const commentPosition = highlightEnd + footnoteLength + customMatch.index!;
                             if (commentText.trim()) {
                                 allFootnotes.push({
                                     type: 'inline',
@@ -5088,51 +5196,28 @@ export class HighlightsSidebarView extends ItemView {
                                 });
                             }
                         }
-                    }
-
-                    // Check for adjacent custom pattern comments
-                    for (const customPattern of this.plugin.settings.customPatterns) {
-                        if (customPattern.type === 'comment') {
-                            try {
-                                const customRegex = new RegExp('^\\s*(' + customPattern.pattern + ')');
-                                const customMatch = afterFootnotes.match(customRegex);
-                                if (customMatch && customMatch[2]) { // customMatch[2] should be the captured group
-                                    const commentText = customMatch[2];
-                                    const commentPosition = highlightEnd + footnoteLength + customMatch.index!;
-                                    if (commentText.trim()) {
-                                        allFootnotes.push({
-                                            type: 'inline',
-                                            index: commentPosition,
-                                            content: commentText.trim()
-                                        });
-                                    }
-                                }
-                            } catch {
-                                // Skip invalid custom patterns
-                            }
-                        }
+                    } catch {
+                        // Skip invalid custom patterns
                     }
                 }
-
-                // Sort footnotes by their position in the text
-                allFootnotes.sort((a, b) => a.index - b.index);
-
-                // Extract content in the correct order
-                const footnoteContents = allFootnotes.map(f => f.content);
-                const footnoteCount = footnoteContents.length;
-
-                // Return updated highlight
-                return {
-                    ...originalHighlight,
-                    footnoteCount,
-                    footnoteContents,
-                    startOffset: match.index,
-                    endOffset: match.index + match[0].length
-                };
             }
         }
-        
-        return null;
+
+        // Sort footnotes by their position in the text
+        allFootnotes.sort((a, b) => a.index - b.index);
+
+        // Extract content in the correct order
+        const footnoteContents = allFootnotes.map(f => f.content);
+        const footnoteCount = footnoteContents.length;
+
+        // Return updated highlight
+        return {
+            ...originalHighlight,
+            footnoteCount,
+            footnoteContents,
+            startOffset: location.matchStart,
+            endOffset: location.matchEnd
+        };
     }
 
     async focusHighlightInEditor(highlight: Highlight, event?: MouseEvent) {
@@ -5905,8 +5990,9 @@ export class HighlightsSidebarView extends ItemView {
     }
 
     private changeHighlightColor(highlight: Highlight, color: string) {
-        // Update the highlight color (use undefined for empty string to clear the color)
-        this.plugin.updateHighlight(highlight.id, { color: color || undefined }, highlight.filePath);
+        // Writes the colour into the note's own markup where it can, so the note
+        // shows it too; falls back to plugin data for markup it does not own.
+        void this.plugin.setHighlightColor(highlight, color);
     }
 
     private getColorName(hex: string): string {
@@ -7302,6 +7388,9 @@ export class HighlightsSidebarView extends ItemView {
         // Copy all visible results (highlights, or tasks in the Tasks tab)
         this.addCopyVisibleMenuItems(menu);
 
+        // Draw the visible highlights as an Excalidraw mindmap
+        this.addExcalidrawExportMenuItem(menu);
+
         // Revert highlight colors
         menu.addItem((item) => {
             item
@@ -7468,6 +7557,101 @@ export class HighlightsSidebarView extends ItemView {
                     .onClick(() => copy(format))
             );
         }
+    }
+
+    /**
+     * "Export to Excalidraw mindmap": draws exactly what the tab is showing, so
+     * the filters and the colour picker the user already set are what lands in
+     * the drawing. Absent from the Tasks tab, which has no highlights.
+     */
+    private addExcalidrawExportMenuItem(menu: Menu) {
+        if (this.viewMode === 'tasks') return;
+
+        const count = this.getCurrentlyVisibleHighlights().length;
+        // Exporting the same scope twice refreshes the map rather than leaving a
+        // second copy beside it, so the entry says which one it is about to do.
+        const existing = this.findExistingMindmapForScope();
+
+        menu.addItem((item) => {
+            item
+                .setTitle(existing
+                    ? t('toolbar.syncExcalidraw', { count })
+                    : t('toolbar.exportExcalidraw', { count }))
+                .setIcon(existing ? 'refresh-cw' : 'git-fork')
+                .setDisabled(count === 0)
+                .onClick(() => {
+                    void this.exportVisibleHighlightsToExcalidraw();
+                });
+        });
+    }
+
+    /**
+     * Show the toolbar's refresh button only when there is a map to refresh, so
+     * it reads as "your map is out of date" rather than as a second export
+     * button. Called on every render, since switching tab or note changes it.
+     */
+    private updateMindmapRefreshButton(): void {
+        if (!this.mindmapRefreshButton) return;
+        this.mindmapRefreshButton.hidden = this.viewMode === 'tasks' || !this.findExistingMindmapForScope();
+    }
+
+    /**
+     * Whole-note AI needs a note and at least one note-scoped prompt. Hidden
+     * rather than disabled when there is no note: a greyed button in a toolbar
+     * this narrow reads as broken rather than as unavailable.
+     */
+    private updateNoteAiButton(): void {
+        if (!this.noteAiButton) return;
+        this.noteAiButton.hidden =
+            this.viewMode === 'tasks' ||
+            !noteAiAvailable(this.plugin) ||
+            !this.plugin.app.workspace.getActiveFile();
+    }
+
+    /** The map this tab's scope was exported to before, if there is one. */
+    private findExistingMindmapForScope(): TFile | null {
+        return this.plugin.findExistingMindmap(
+            this.getExcalidrawExportName(),
+            this.getExcalidrawSourceFile()
+        );
+    }
+
+    /** Only a single-note scope has an obvious folder to sit next to. */
+    private getExcalidrawSourceFile(): TFile | null {
+        const paths = new Set(this.getCurrentlyVisibleHighlights().map(highlight => highlight.filePath));
+        if (paths.size !== 1) return null;
+        const file = this.plugin.app.vault.getAbstractFileByPath([...paths][0]);
+        return file instanceof TFile ? file : null;
+    }
+
+    /**
+     * Name the drawing after whatever the tab is scoped to, so the file says
+     * where its contents came from without the user renaming it.
+     */
+    private getExcalidrawExportName(): string {
+        if (this.viewMode === 'current') {
+            return this.plugin.app.workspace.getActiveFile()?.basename ?? t('tabs.currentNote');
+        }
+        if (this.viewMode === 'folder') {
+            return this.getCurrentFolderLabel() ?? t('tabs.currentFolder');
+        }
+        if (this.viewMode === 'collections' && this.currentCollectionId) {
+            return this.plugin.collectionsManager.getCollection(this.currentCollectionId)?.name ?? t('tabs.collections');
+        }
+        return t('tabs.allNotes');
+    }
+
+    private async exportVisibleHighlightsToExcalidraw() {
+        const visible = this.getCurrentlyVisibleHighlights();
+        if (visible.length === 0) {
+            new Notice(t('notices.excalidrawNothingToExport'));
+            return;
+        }
+
+        await this.plugin.exportHighlightsToExcalidraw(visible, {
+            baseName: this.getExcalidrawExportName(),
+            sourceFile: this.getExcalidrawSourceFile()
+        });
     }
 
     /**

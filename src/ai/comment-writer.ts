@@ -161,6 +161,12 @@ export interface HighlightAnchor {
     isNativeComment?: boolean;
     /** Set for custom-pattern highlights, where the delimiters are user-defined. */
     fullMatch?: string;
+    /**
+     * How the highlight is written in the note. Only a hint: a highlight that
+     * was recoloured after the sidebar last read it has changed form without
+     * changing its text, so every form is tried whatever this says.
+     */
+    type?: 'highlight' | 'comment' | 'html' | 'custom';
 }
 
 export interface HighlightLocation {
@@ -177,26 +183,54 @@ function escapeRegex(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** The literal text to search for, delimiters included. */
-function searchTextFor(anchor: HighlightAnchor): string {
-    if (anchor.fullMatch) return anchor.fullMatch;
-    if (anchor.isNativeComment) return `%%${anchor.text}%%`;
-    return `==${anchor.text}==`;
+/** The tags an HTML highlight can be written with; see utils/html-highlight-parser.ts. */
+const HTML_HIGHLIGHT_TAGS = 'mark|span|font';
+
+/**
+ * The forms this highlight might be written in, most likely first.
+ *
+ * More than one, because the note is the only source of truth about markup and
+ * the sidebar's copy of it can be a step behind. Colouring a highlight rewrites
+ * `==text==` as `<mark style="…">text</mark>`, so a stored `==` highlight and a
+ * `<mark>` in the note are routinely the same highlight — searching for only
+ * one form is what made a coloured highlight read as "moved" and refuse the
+ * comment.
+ */
+function searchPatternsFor(anchor: HighlightAnchor): RegExp[] {
+    const exact = anchor.fullMatch ? [new RegExp(escapeRegex(anchor.fullMatch), 'g')] : [];
+
+    // A custom pattern's delimiters are user-defined, so the stored match is the
+    // only thing safe to search for — falling back to `==text==` could attach
+    // the comment to an unrelated highlight that happens to share the text.
+    // Before HTML highlights stored a match of their own, only custom patterns
+    // had one, so a missing type here means custom too.
+    if (anchor.fullMatch && anchor.type !== 'html') return exact;
+    if (!anchor.text) return exact;
+
+    const text = escapeRegex(anchor.text);
+    if (anchor.isNativeComment) return [...exact, new RegExp(`%%${text}%%`, 'g')];
+
+    const markdown = new RegExp(`==${text}==`, 'g');
+    // Whitespace either side because an HTML highlight's stored text comes from
+    // the element's textContent, which a formatter may have padded since.
+    const html = new RegExp(`<(${HTML_HIGHLIGHT_TAGS})\\b[^>]*>\\s*${text}\\s*</\\1>`, 'gi');
+
+    return anchor.type === 'html' ? [...exact, html, markdown] : [...exact, markdown, html];
 }
 
 /**
- * Finds the highlight in the note and says where a new comment attaches.
+ * The occurrence of `pattern` closest to the stored offset.
  *
  * Offsets drift as a note is edited, so the stored offset is a hint rather
  * than an address: every occurrence of the same text is a candidate and the
  * nearest one wins. Identical highlights in one note are the reason this
  * cannot simply take the first match.
  */
-export function locateHighlight(content: string, anchor: HighlightAnchor): HighlightLocation | null {
-    const needle = searchTextFor(anchor);
-    if (!needle) return null;
-
-    const pattern = new RegExp(escapeRegex(needle), 'g');
+function nearestMatch(
+    content: string,
+    pattern: RegExp,
+    offset: number
+): { start: number; end: number } | null {
     let best: { start: number; end: number } | null = null;
     let bestDistance = Infinity;
 
@@ -204,11 +238,23 @@ export function locateHighlight(content: string, anchor: HighlightAnchor): Highl
         // matchAll always supplies an index; the type does not say so because
         // RegExpExecArray is shared with exec() on a non-global pattern.
         const start = match.index ?? 0;
-        const distance = Math.abs(start - anchor.startOffset);
+        const distance = Math.abs(start - offset);
         if (distance < bestDistance) {
             bestDistance = distance;
             best = { start, end: start + match[0].length };
         }
+    }
+
+    return best;
+}
+
+/** Finds the highlight in the note and says where a new comment attaches. */
+export function locateHighlight(content: string, anchor: HighlightAnchor): HighlightLocation | null {
+    let best: { start: number; end: number } | null = null;
+
+    for (const pattern of searchPatternsFor(anchor)) {
+        best = nearestMatch(content, pattern, anchor.startOffset);
+        if (best) break;
     }
 
     if (!best) return null;
@@ -225,6 +271,54 @@ export interface CommentWrite {
     content: string;
     style: FootnoteStyle;
     key: string | null;
+}
+
+/** One range replacement, in offsets over the text the edits were computed from. */
+export interface CommentEdit {
+    text: string;
+    from: number;
+    /** Equal to `from` for a pure insertion. */
+    to: number;
+}
+
+/**
+ * The same comment as range edits rather than as new content, for a caller that
+ * holds an editor instead of a string.
+ *
+ * Every offset is in the *pre-edit* text and the edits must be applied in the
+ * order returned, which is what makes that safe: the definition goes at the end
+ * of the note, so applying it first cannot move the reference position that
+ * comes before it.
+ *
+ * Range edits rather than replacing the whole document, because a document-wide
+ * write throws away the editor's undo history and the user's cursor with it.
+ */
+export function commentEditsForHighlight(
+    content: string,
+    anchor: HighlightAnchor,
+    commentText: string,
+    preferInline: boolean
+): CommentEdit[] | null {
+    const location = locateHighlight(content, anchor);
+    if (!location) return null;
+
+    const footnote = buildFootnote(content, commentText, preferInline);
+    const edits: CommentEdit[] = [];
+
+    if (footnote.definition) {
+        // Everything up to the trailing whitespace is byte-identical either
+        // way, so that is all the definition edit has to touch.
+        const unchanged = content.replace(/\s+$/, '').length;
+        edits.push({
+            text: appendFootnoteDefinition(content, footnote.definition).slice(unchanged),
+            from: unchanged,
+            to: content.length
+        });
+    }
+
+    edits.push({ text: footnote.reference, from: location.insertAt, to: location.insertAt });
+
+    return edits;
 }
 
 /**

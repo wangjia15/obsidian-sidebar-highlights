@@ -4,9 +4,13 @@ import {
     buildMessages,
     builtinPrompts,
     enabledPrompts,
+    enabledPromptsForScope,
     hasUserChanges,
     interpolate,
     isBuiltinPromptId,
+    outOfScopeVariables,
+    outputTargetsFor,
+    variablesForScope,
     removeStoredPrompt,
     resolvePrompts,
     unknownVariables,
@@ -86,13 +90,16 @@ describe('variablesUsed', () => {
 });
 
 describe('builtin prompts', () => {
-    it('ships the six presets the plan calls for', () => {
+    it('ships the presets the plan calls for, in menu order', () => {
         expect(builtinPrompts().map(prompt => prompt.id)).toEqual([
             'summarize',
             'explain',
             'translate',
             'ask',
             'tags',
+            'note-summary',
+            'note-extract',
+            'note-outline',
             'diagram'
         ]);
     });
@@ -114,10 +121,34 @@ describe('builtin prompts', () => {
         }
     });
 
-    it('passes the highlight to every builtin', () => {
+    it('gives every builtin the subject its scope is about', () => {
         for (const prompt of builtinPrompts()) {
-            expect(variablesUsed(prompt.template)).toContain('selection');
+            const subject = prompt.scope === 'note' ? 'note' : 'selection';
+            expect(variablesUsed(prompt.template)).toContain(subject);
         }
+    });
+
+    it('keeps every builtin to variables its own scope can fill', () => {
+        for (const prompt of builtinPrompts()) {
+            expect(outOfScopeVariables(prompt.template, prompt.scope)).toEqual([]);
+        }
+    });
+
+    it('gives every builtin an output target its scope can dispatch', () => {
+        for (const prompt of builtinPrompts()) {
+            expect(outputTargetsFor(prompt.scope)).toContain(prompt.outputTarget);
+        }
+    });
+
+    it('tells the extract prompt to quote verbatim, which is what marking needs', () => {
+        const extract = builtinPrompts().find(prompt => prompt.id === 'note-extract');
+
+        // passage-marker locates each line in the note and refuses to insert
+        // anything it cannot find, so a paraphrasing model produces no marks.
+        expect(extract?.outputTarget).toBe('highlights');
+        expect(extract?.template).toContain('exactly');
+        expect(extract?.template).toContain('One passage per line');
+        expect(extract?.system).toContain('verbatim');
     });
 
     it('asks the diagram prompt for exactly one mermaid block', () => {
@@ -208,6 +239,70 @@ describe('enabledPrompts', () => {
 
     it('drops a prompt whose template was emptied, which would send nothing', () => {
         expect(enabledPrompts([{ id: 'explain', template: '   ' }]).map(prompt => prompt.id)).not.toContain('explain');
+    });
+});
+
+describe('prompt scope', () => {
+    it('treats a stored prompt with no scope as a highlight prompt', () => {
+        // Every prompt written before whole-note prompts existed was one.
+        const resolved = resolvePrompts([{ id: 'mine', template: '{{selection}}' }]);
+        expect(resolved.find(prompt => prompt.id === 'mine')?.scope).toBe('highlight');
+    });
+
+    it('splits the menus by scope', () => {
+        const highlightIds = enabledPromptsForScope([], 'highlight').map(prompt => prompt.id);
+        const noteIds = enabledPromptsForScope([], 'note').map(prompt => prompt.id);
+
+        expect(highlightIds).toContain('summarize');
+        expect(highlightIds).not.toContain('note-summary');
+        expect(noteIds).toContain('note-summary');
+        expect(noteIds).not.toContain('summarize');
+    });
+
+    it('carries a stored scope through', () => {
+        const resolved = resolvePrompts([{ id: 'mine', template: '{{note}}', scope: 'note' }]);
+        expect(resolved.find(prompt => prompt.id === 'mine')?.scope).toBe('note');
+    });
+
+    it('replaces an output target the scope cannot dispatch', () => {
+        // A note prompt asked to insert a comment has no highlight to hang one
+        // on; an imported or hand-edited prompt can name one anyway.
+        const resolved = resolvePrompts([
+            { id: 'mine', template: '{{note}}', scope: 'note', outputTarget: 'comment' }
+        ]);
+        expect(resolved.find(prompt => prompt.id === 'mine')?.outputTarget).toBe('preview');
+    });
+
+    it('replaces a builtin\'s target when a patch switches its scope', () => {
+        const resolved = resolvePrompts([{ id: 'summarize', scope: 'note' }]);
+        const summarize = resolved.find(prompt => prompt.id === 'summarize');
+
+        expect(summarize?.scope).toBe('note');
+        expect(outputTargetsFor('note')).toContain(summarize!.outputTarget);
+    });
+
+    it('keeps a valid target alone', () => {
+        const resolved = resolvePrompts([
+            { id: 'mine', template: '{{note}}', scope: 'note', outputTarget: 'highlights' }
+        ]);
+        expect(resolved.find(prompt => prompt.id === 'mine')?.outputTarget).toBe('highlights');
+    });
+
+    it('offers each scope only the variables it can fill', () => {
+        expect(variablesForScope('note')).not.toContain('selection');
+        expect(variablesForScope('note')).toContain('note');
+        expect(variablesForScope('highlight')).toContain('selection');
+        expect(variablesForScope('highlight')).not.toContain('highlights');
+    });
+
+    it('flags a variable the scope cannot fill', () => {
+        expect(outOfScopeVariables('About {{selection}}', 'note')).toEqual(['selection']);
+        expect(outOfScopeVariables('About {{note}}', 'note')).toEqual([]);
+    });
+
+    it('does not flag an unknown variable as out of scope, which would double-report it', () => {
+        expect(outOfScopeVariables('{{slection}}', 'note')).toEqual([]);
+        expect(unknownVariables('{{slection}}')).toEqual(['slection']);
     });
 });
 

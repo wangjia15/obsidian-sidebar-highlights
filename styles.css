@@ -343,6 +343,14 @@
     margin-left: auto;
 }
 
+/* `display: flex` above outranks the browser's own `[hidden] { display: none }`,
+   which is an author-vs-UA-stylesheet contest the author rule always wins. So a
+   toolbar button hidden from script — the mindmap refresh, the whole-note AI —
+   has to have the attribute honoured here or it stays on screen. */
+.highlights-group-button[hidden] {
+    display: none;
+}
+
 .highlights-group-button:hover {
     background-color: var(--background-modifier-hover) !important;
     opacity: var(--icon-opacity-hover);
@@ -473,18 +481,31 @@
     height: 10px;
 }
 
+/*
+ * A card carries its highlight's colour whether or not it is selected: a wide
+ * left edge plus a faint wash of the same colour across the card. Selection then
+ * only has to say "this one", instead of being the moment the colour appears.
+ *
+ * --sh-card-color is set inline per card by the renderer; the fallback keeps
+ * cards that never get one (native comments) on the theme's own surface.
+ */
 .highlight-item-card {
-    background: var(--background-secondary); 
-    border: none; 
-    border-left: 5px solid rgb(var(--text-highlight-bg-rgb)); /* Default color, overridden by color classes */
-    border-radius: 6px; 
-    padding: 0; 
-    margin-bottom: 10px; 
-    box-shadow: var(--shadow-s); 
+    background: var(--background-secondary);
+    background: color-mix(in srgb, var(--sh-card-color, transparent) 7%, var(--background-secondary));
+    border: none;
+    border-left: 8px solid rgb(var(--text-highlight-bg-rgb)); /* Default color, overridden by color classes */
+    border-radius: 6px;
+    padding: 0;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow-s);
     font-size: var(--font-ui-smaller);
     font-weight: var(--font-light);
     transition: background-color 0.2s ease, border-left-color 0.2s ease;
     position: relative;
+}
+
+.highlight-item-card:hover {
+    background: color-mix(in srgb, var(--sh-card-color, transparent) 13%, var(--background-secondary));
 }
 
 .highlight-item-card.selected {
@@ -2885,6 +2906,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 260px;
+}
+
+/* The tail of a streaming answer, shown while a single run writes a comment.
+   Two lines and no more: enough to see the model is working, not so much that
+   the notice becomes the answer. */
+.sh-ai-run-progress {
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    max-width: 260px;
+    max-height: 2.6em;
+    overflow: hidden;
+}
+
+.sh-ai-run-progress:empty {
+    display: none;
 }
 
 .sh-ai-batch-stop {
