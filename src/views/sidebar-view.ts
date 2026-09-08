@@ -7578,7 +7578,7 @@ export class HighlightsSidebarView extends ItemView {
                     ? t('toolbar.syncExcalidraw', { count })
                     : t('toolbar.exportExcalidraw', { count }))
                 .setIcon(existing ? 'refresh-cw' : 'git-fork')
-                .setDisabled(count === 0)
+                .setDisabled(count === 0 && !this.getExcalidrawSourceFile())
                 .onClick(() => {
                     void this.exportVisibleHighlightsToExcalidraw();
                 });
@@ -7618,6 +7618,10 @@ export class HighlightsSidebarView extends ItemView {
 
     /** Only a single-note scope has an obvious folder to sit next to. */
     private getExcalidrawSourceFile(): TFile | null {
+        if (this.viewMode === 'current') {
+            const active = this.plugin.app.workspace.getActiveFile();
+            if (active?.extension === 'md' && !active.path.endsWith('.excalidraw.md')) return active;
+        }
         const paths = new Set(this.getCurrentlyVisibleHighlights().map(highlight => highlight.filePath));
         if (paths.size !== 1) return null;
         const file = this.plugin.app.vault.getAbstractFileByPath([...paths][0]);
@@ -7643,7 +7647,7 @@ export class HighlightsSidebarView extends ItemView {
 
     private async exportVisibleHighlightsToExcalidraw() {
         const visible = this.getCurrentlyVisibleHighlights();
-        if (visible.length === 0) {
+        if (visible.length === 0 && !this.getExcalidrawSourceFile()) {
             new Notice(t('notices.excalidrawNothingToExport'));
             return;
         }

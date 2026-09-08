@@ -143,7 +143,7 @@ function buildNoteNode(note: MindmapNoteInput, includeComments: boolean): Mindma
     }
 
     sortChildren(root);
-    pruneEmptyHeadings(root);
+
 
     return root.children.length > 0 ? root : null;
 }
@@ -198,14 +198,6 @@ function sortChildren(node: MindmapNode): void {
     node.children.forEach(sortChildren);
 }
 
-/** Drop headings that contain no highlights, so filtered exports stay readable. */
-function pruneEmptyHeadings(node: MindmapNode): boolean {
-    node.children = node.children.filter(child =>
-        child.kind === 'heading' ? pruneEmptyHeadings(child) : true
-    );
-    return node.children.length > 0;
-}
-
 /** Collapse the whitespace a multi-line highlight carries so it reads as one label. */
 function cleanLabel(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
@@ -222,10 +214,18 @@ const H_GAP = 80;
 const V_GAP = 16;
 const MIN_BOX_WIDTH = 90;
 
+/**
+ * No line cap: a node is as tall as its text needs.
+ *
+ * A mind map made from highlights is read in the map, not in the note it came
+ * from, so a highlight cut off at eight lines with an ellipsis is a node that
+ * cannot be read at all. Height is the cheap dimension here — the layout stacks
+ * siblings vertically and Mindmap Builder re-spaces them afterwards — so the
+ * label wraps as far as it has to and `wrapLabel`'s cap goes unused.
+ */
 interface KindStyle {
     fontSize: number;
     maxTextWidth: number;
-    maxLines: number;
     background: string;
     stroke: string;
     strokeStyle: 'solid' | 'dashed';
@@ -233,11 +233,11 @@ interface KindStyle {
 }
 
 const KIND_STYLES: Record<MindmapNodeKind, KindStyle> = {
-    root: { fontSize: 20, maxTextWidth: 240, maxLines: 3, background: '#a5d8ff', stroke: '#1971c2', strokeStyle: 'solid', strokeWidth: 2 },
-    note: { fontSize: 20, maxTextWidth: 240, maxLines: 3, background: '#a5d8ff', stroke: '#1971c2', strokeStyle: 'solid', strokeWidth: 2 },
-    heading: { fontSize: 16, maxTextWidth: 220, maxLines: 3, background: '#e9ecef', stroke: '#495057', strokeStyle: 'solid', strokeWidth: 2 },
-    highlight: { fontSize: 14, maxTextWidth: 300, maxLines: 8, background: '#ffec99', stroke: '#1e1e1e', strokeStyle: 'solid', strokeWidth: 1 },
-    comment: { fontSize: 13, maxTextWidth: 260, maxLines: 6, background: '#f8f9fa', stroke: '#868e96', strokeStyle: 'dashed', strokeWidth: 1 }
+    root: { fontSize: 20, maxTextWidth: 240, background: '#a5d8ff', stroke: '#1971c2', strokeStyle: 'solid', strokeWidth: 2 },
+    note: { fontSize: 20, maxTextWidth: 240, background: '#a5d8ff', stroke: '#1971c2', strokeStyle: 'solid', strokeWidth: 2 },
+    heading: { fontSize: 16, maxTextWidth: 220, background: '#e9ecef', stroke: '#495057', strokeStyle: 'solid', strokeWidth: 2 },
+    highlight: { fontSize: 14, maxTextWidth: 300, background: '#ffec99', stroke: '#1e1e1e', strokeStyle: 'solid', strokeWidth: 1 },
+    comment: { fontSize: 13, maxTextWidth: 260, background: '#f8f9fa', stroke: '#868e96', strokeStyle: 'dashed', strokeWidth: 1 }
 };
 
 interface LaidOutNode {
@@ -361,7 +361,7 @@ function tokenize(text: string): string[] {
 
 function measureNode(node: MindmapNode, depth: number, orderIndex = 0): LaidOutNode {
     const style = KIND_STYLES[node.kind];
-    const lines = wrapLabel(node.label || ' ', style.maxTextWidth, style.fontSize, style.maxLines);
+    const lines = wrapLabel(node.label || ' ', style.maxTextWidth, style.fontSize, Number.POSITIVE_INFINITY);
     const textWidth = Math.max(...lines.map(line => measureText(line, style.fontSize)));
     const textHeight = lines.length * style.fontSize * LINE_HEIGHT;
 

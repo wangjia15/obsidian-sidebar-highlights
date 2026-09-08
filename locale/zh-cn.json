@@ -315,8 +315,8 @@
       },
       "note": {
         "charLimit": {
-          "name": "整篇笔记字符上限",
-          "desc": "整篇笔记的提示词最多可发送多少字符。超出部分会被截断并给出提示。上限越高，单次调用花费越多。"
+          "name": "整篇笔记单次请求字符数",
+          "desc": "较长笔记会优先按标题或段落拆分，并通过多次请求处理。数值越大，请求次数越少，但模型需要支持更大的上下文。"
         },
         "extractColor": {
           "name": "摘录高亮的颜色",
@@ -497,8 +497,9 @@
     },
     "note": {
       "working": "正在对《{{note}}》运行 {{name}}…",
-      "truncated": "本文超过 {{limit}} 字符上限，仅发送了开头部分。如果答案不完整，请在「设置 → AI」中提高上限。",
+      "chunked": "本文较长，将拆成 {{count}} 段处理，不会遗漏原文内容。",
       "appended": "已写入笔记的「{{heading}}」小节",
+      "created": "已创建 {{path}}",
       "marked": "已标记 {{marked}} 处",
       "markedSome": "已标记 {{marked}} 处；{{missed}} 处未能在原文中逐字匹配，已跳过。",
       "markedNone": "{{total}} 处摘录均未能在原文中逐字匹配，因此没有标记任何内容。模型做了转述而非原文摘录——请重试，或要求它严格照抄原文。",
@@ -787,6 +788,8 @@
         "comment": "插入为评论",
         "both": "先预览再决定",
         "append": "写入笔记",
+        "new-markdown": "生成新的 Markdown 文档",
+        "new-html": "生成新的 HTML 文档",
         "highlights": "标记摘录段落"
       }
     },
@@ -799,6 +802,9 @@
       "model": "模型",
       "payload": "载荷",
       "payloadValue": "{{chars}} 个字符",
+      "requests": "请求次数",
+      "requestsValue": "{{count}} 次独立请求",
+      "manyRequests": "本文较长，会拆成多次请求发送，费用是单次的数倍，因此即使已关闭逐次确认也仍需确认一次。",
       "dontAsk": "此 vault 中不再询问",
       "cancel": "取消",
       "send": "发送"
@@ -817,6 +823,8 @@
       "followUpPlaceholder": "追加一句要求…",
       "followUpSend": "发送",
       "unknownVariable": "该模板引用了 {{names}}，它不是可用变量，已按原样发送。",
+      "createMarkdown": "创建 Markdown 文档",
+      "createHtml": "创建 HTML 文档",
       "insertSection": "写入笔记"
     },
     "diagramZoom": {
@@ -855,5 +863,11 @@
   "render": {
     "diagramError": "图表无法渲染",
     "diagramZoom": "点击放大"
+  },
+  "views": {
+    "aiResult": {
+      "title": "AI 结果",
+      "gone": "工作区重新加载后此回答未被保留。重新运行提示词可再生成一份。"
+    }
   }
 }

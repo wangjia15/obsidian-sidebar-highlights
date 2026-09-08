@@ -1,6 +1,8 @@
+import { rearrangeMindmap } from './src/utils/mindmap-builder';
 // main.ts
 import { App, Editor, MarkdownFileInfo, MarkdownView, Menu, MenuItem, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, ColorComponent, normalizePath } from 'obsidian';
 import { HighlightsSidebarView } from './src/views/sidebar-view';
+import { AiResultView, VIEW_TYPE_AI_RESULT } from './src/views/ai-result-view';
 import { InlineFootnoteManager } from './src/managers/inline-footnote-manager';
 import { ExcludedFilesModal } from './src/modals/excluded-files-modal';
 import { BackupSelectorModal } from './src/modals/backup-selector-modal';
@@ -380,6 +382,10 @@ export default class HighlightCommentsPlugin extends Plugin {
                 return view;
             }
         );
+
+        // AI answers render into a workspace tab rather than a modal, so a long
+        // run can be left to fill in while the vault stays workable.
+        this.registerView(VIEW_TYPE_AI_RESULT, (leaf) => new AiResultView(leaf, this));
 
         this.ribbonIconEl = this.addRibbonIcon('highlighter', 'Open highlights', () => {
             void this.activateView();
@@ -939,7 +945,7 @@ export default class HighlightCommentsPlugin extends Plugin {
         highlights: Highlight[],
         options: { baseName: string; sourceFile?: TFile | null; rootLabel?: string }
     ): Promise<TFile | null> {
-        const content = this.buildMindmapContent(highlights, options.rootLabel || options.baseName);
+        const content = this.buildMindmapContent(highlights, options.rootLabel || options.baseName, options.sourceFile ? [options.sourceFile.path] : []);
 
         if (!content) {
             new Notice(t('notices.excalidrawNothingToExport'));
@@ -958,6 +964,7 @@ export default class HighlightCommentsPlugin extends Plugin {
                 await this.app.vault.modify(existing, content);
                 new Notice(t('notices.excalidrawUpdated', { path: existing.path }));
                 await this.openMindmap(existing);
+                await rearrangeMindmap(this.app, existing);
                 return existing;
             }
 
@@ -965,6 +972,7 @@ export default class HighlightCommentsPlugin extends Plugin {
             const file = await this.app.vault.create(path, content);
             new Notice(t('notices.excalidrawExported', { path: file.path }));
             await this.openMindmap(file);
+            await rearrangeMindmap(this.app, file);
             return file;
         } catch (error) {
             console.error('Failed to export highlights to Excalidraw:', error);
@@ -1000,7 +1008,7 @@ export default class HighlightCommentsPlugin extends Plugin {
             highlights.push(...(this.highlights.get(path) ?? []));
         }
 
-        const content = this.buildMindmapContent(highlights, mindmapFile.basename.replace(/\.excalidraw$/, ''));
+        const content = this.buildMindmapContent(highlights, mindmapFile.basename.replace(/\.excalidraw$/, ''), sources);
         if (!content) {
             report(t('notices.excalidrawNothingToExport'));
             return false;
@@ -1008,6 +1016,7 @@ export default class HighlightCommentsPlugin extends Plugin {
 
         try {
             await this.app.vault.modify(mindmapFile, content);
+            await rearrangeMindmap(this.app, mindmapFile);
             report(t('notices.excalidrawUpdated', { path: mindmapFile.path }));
             return true;
         } catch (error) {
@@ -1062,8 +1071,8 @@ export default class HighlightCommentsPlugin extends Plugin {
     }
 
     /** Turn highlights into `.excalidraw.md` content, grouped by the note each came from. */
-    private buildMindmapContent(highlights: Highlight[], rootLabel: string): string | null {
-        const byFile = new Map<string, Highlight[]>();
+    private buildMindmapContent(highlights: Highlight[], rootLabel: string, sources: string[] = []): string | null {
+        const byFile = new Map<string, Highlight[]>(sources.map(path => [path, []]));
         for (const highlight of highlights) {
             const bucket = byFile.get(highlight.filePath);
             if (bucket) bucket.push(highlight);

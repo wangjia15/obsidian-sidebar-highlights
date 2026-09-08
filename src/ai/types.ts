@@ -116,12 +116,18 @@ export type PromptScope = 'highlight' | 'note';
 /**
  * Where a preset's output is allowed to go.
  *
- * `preview`, `comment` and `both` belong to highlight prompts; `append` and
- * `highlights` to note prompts. The prompt editor only offers the ones its
- * scope can use, and `outputTargetsFor` in prompt-library is the single place
- * that pairing is stated.
+ * `preview`, `comment` and `both` belong to highlight prompts. Note prompts can
+ * write back, mark passages, or create a Markdown/HTML document. The prompt
+ * editor only offers the targets its scope can use.
  */
-export type PromptOutputTarget = 'preview' | 'comment' | 'both' | 'append' | 'highlights';
+export type PromptOutputTarget =
+    | 'preview'
+    | 'comment'
+    | 'both'
+    | 'append'
+    | 'highlights'
+    | 'new-markdown'
+    | 'new-html';
 
 /** A prompt as the rest of the plugin sees it: every field resolved. */
 export interface PromptPreset {
@@ -258,7 +264,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
     defaultTargetLanguage: '',
     contextCharLimit: 4000,
     // Enough for a long note in one request without being a bill by accident;
-    // longer notes are cut with a marker rather than silently truncated.
+    // longer notes are split into requests at natural document boundaries.
     noteCharLimit: 24000,
     includeNoteContext: false,
     includeExistingComments: false,

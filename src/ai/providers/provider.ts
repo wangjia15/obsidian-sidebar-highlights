@@ -217,6 +217,13 @@ export function requireText(text: string | undefined, providerLabel: string): st
  */
 export interface StreamHandlers {
     onDelta(text: string): void;
+    /**
+     * A reasoning model's thinking, when the provider streams it separately
+     * from the answer. It can run for minutes before the first word of the
+     * answer arrives, so a UI that ignores it looks like it has hung. Never
+     * part of the result: it is shown while waiting and then replaced.
+     */
+    onReasoning?(text: string): void;
 }
 
 export interface StreamCall {

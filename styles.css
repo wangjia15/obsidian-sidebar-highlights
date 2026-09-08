@@ -2621,7 +2621,37 @@
     min-width: 0;
 }
 
-/* --- AI run: result modal --- */
+/* --- AI run: result panel --- */
+
+/* The panel is a workspace tab, so it fills whatever it is docked into:
+   the body takes the slack and everything else keeps its natural height. */
+.sh-ai-result-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 12px 16px;
+    gap: 0;
+}
+
+.sh-ai-result-view .sh-ai-result-body {
+    flex: 1 1 auto;
+    /* Overrides the modal-era cap: in a tab there is no dialog to outgrow. */
+    max-height: none;
+    min-height: 0;
+}
+
+.sh-ai-result-view .sh-ai-result-footer {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.sh-ai-result-title {
+    font-size: var(--font-ui-medium);
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+    margin-bottom: 4px;
+}
 
 .sh-ai-result-title-icon {
     display: inline-flex;
@@ -2663,6 +2693,17 @@
     border-radius: var(--radius-s);
     background: var(--background-secondary);
     margin-bottom: 10px;
+}
+
+/* A reasoning model's thinking while it thinks. Dimmed and set apart, because
+   it is progress rather than an answer, and it is gone once one arrives. */
+.sh-ai-result-thinking {
+    white-space: pre-wrap;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    border-left: 2px solid var(--background-modifier-border);
+    padding-left: 10px;
 }
 
 /* Line breaks are the only formatting kept until the rich renderer arrives;

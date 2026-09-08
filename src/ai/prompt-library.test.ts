@@ -140,6 +140,12 @@ describe('builtin prompts', () => {
         }
     });
 
+    it('offers new Markdown and HTML documents for whole-note prompts', () => {
+        expect(outputTargetsFor('note')).toEqual([
+            'preview', 'append', 'new-markdown', 'new-html', 'highlights'
+        ]);
+    });
+
     it('tells the extract prompt to quote verbatim, which is what marking needs', () => {
         const extract = builtinPrompts().find(prompt => prompt.id === 'note-extract');
 

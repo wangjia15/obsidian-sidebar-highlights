@@ -330,8 +330,8 @@
       },
       "note": {
         "charLimit": {
-          "name": "Whole-note character limit",
-          "desc": "How much of a note a whole-note prompt may send. Longer notes are cut at this point and you are told when that happens. Larger costs more per run."
+          "name": "Characters per whole-note request",
+          "desc": "Longer notes are split at headings or paragraphs and processed in several requests. A larger value uses fewer requests but requires a model with a larger context window."
         },
         "extractColor": {
           "name": "Color for extracted highlights",
@@ -512,8 +512,9 @@
     },
     "note": {
       "working": "Running {{name}} on {{note}}…",
-      "truncated": "This note is longer than the {{limit}}-character limit, so only the start of it was sent. Raise the limit in Settings → AI if the answer looks partial.",
+      "chunked": "This long note will be processed in {{count}} parts so no source content is omitted.",
       "appended": "Written into the note under \"{{heading}}\"",
+      "created": "Created {{path}}",
       "marked": "Highlighted {{marked}} passages",
       "markedSome": "Highlighted {{marked}} passages. {{missed}} could not be found in the note word for word and were skipped.",
       "markedNone": "None of the {{total}} passages matched the note word for word, so nothing was highlighted. The model paraphrased instead of quoting — try again, or ask it to quote exactly.",
@@ -802,6 +803,8 @@
         "comment": "Insert as a comment",
         "both": "Preview, then choose",
         "append": "Write into the note",
+        "new-markdown": "Create a new Markdown document",
+        "new-html": "Create a new HTML document",
         "highlights": "Highlight the passages"
       }
     },
@@ -814,6 +817,9 @@
       "model": "Model",
       "payload": "Payload",
       "payloadValue": "{{chars}} characters",
+      "requests": "Requests",
+      "requestsValue": "{{count}} separate requests",
+      "manyRequests": "A note this long is sent in several requests and costs several times what one does, so it is confirmed even though per-send confirmation is off.",
       "dontAsk": "Don't ask again for this vault",
       "cancel": "Cancel",
       "send": "Send"
@@ -832,6 +838,8 @@
       "followUpPlaceholder": "Ask for something else…",
       "followUpSend": "Send",
       "unknownVariable": "This template references {{names}}, which is not a variable. It was sent as written.",
+      "createMarkdown": "Create Markdown document",
+      "createHtml": "Create HTML document",
       "insertSection": "Write into the note"
     },
     "diagramZoom": {
@@ -870,5 +878,11 @@
   "render": {
     "diagramError": "Diagram could not be rendered",
     "diagramZoom": "Click to open larger"
+  },
+  "views": {
+    "aiResult": {
+      "title": "AI result",
+      "gone": "This answer was not kept when the workspace reloaded. Run the prompt again to get a new one."
+    }
   }
 }

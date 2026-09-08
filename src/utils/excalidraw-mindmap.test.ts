@@ -61,10 +61,10 @@ describe('buildMindmapTree', () => {
             highlights: [{ text: 'intro quote', line: 1 }]
         })]);
 
-        expect(labels(tree!)).toEqual(['intro quote']);
+        expect(labels(tree!)).toEqual(['intro quote', 'Later']);
     });
 
-    it('drops headings that hold no highlights, so a filtered export stays readable', () => {
+    it('retains headings that hold no highlights', () => {
         const tree = buildMindmapTree([note({
             headings: [
                 { heading: 'Empty', level: 1, line: 0 },
@@ -73,7 +73,7 @@ describe('buildMindmapTree', () => {
             highlights: [{ text: 'kept', line: 6 }]
         })]);
 
-        expect(labels(tree!)).toEqual(['Used']);
+        expect(labels(tree!)).toEqual(['Empty', 'Used']);
     });
 
     it('renders comments as children of their highlight', () => {
@@ -103,8 +103,8 @@ describe('buildMindmapTree', () => {
         expect(labels(tree!)).toEqual(['One', 'Two']);
     });
 
-    it('skips notes with no highlights and returns null when nothing is left', () => {
-        expect(buildMindmapTree([note({ headings: [{ heading: 'H', level: 1, line: 0 }] })])).toBeNull();
+    it('imports heading-only notes and returns null when nothing is left', () => {
+        expect(buildMindmapTree([note({ headings: [{ heading: 'H', level: 1, line: 0 }] })])?.children[0].label).toBe('H');
         expect(buildMindmapTree([])).toBeNull();
     });
 
@@ -552,4 +552,18 @@ describe('sanitizeFileName', () => {
         expect(sanitizeFileName('')).toBe('Highlights');
         expect(sanitizeFileName('   ')).toBe('Highlights');
     });
+});
+
+
+it('sizes comment containers for the entire long AI answer', () => {
+    const answer = '这是很长的解释包含全部内容'.repeat(150);
+    const tree = buildMindmapTree([note({ highlights: [{ text: 'quote', line: 1, comments: [answer] }] })])!;
+    const scene = buildMindmapScene(tree);
+    const text = scene.elements.find(element => element.type === 'text' && element.rawText === answer)!;
+    const box = scene.elements.find(element => element.id === text.containerId)!;
+    expect((text.text as string).replace(/\n/g, '')).toBe(answer);
+    expect(box.height).toBeGreaterThan(Number(text.height));
+    expect(box.width).toBeGreaterThan(Number(text.width));
+    expect(text.y).toBeGreaterThanOrEqual(Number(box.y));
+    expect(Number(text.y) + Number(text.height)).toBeLessThanOrEqual(Number(box.y) + Number(box.height));
 });

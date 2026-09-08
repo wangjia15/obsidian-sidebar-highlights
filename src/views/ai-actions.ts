@@ -12,7 +12,7 @@ import {
     writeCommentForHighlight
 } from '../ai/comment-writer';
 import { AiConfirmSendModal } from '../modals/ai-confirm-send-modal';
-import { AiResultModal } from '../modals/ai-result-modal';
+import { openAiResultView } from './ai-result-view';
 import type { PromptPreset } from '../ai/types';
 import { runBatch, summarize, type BatchItem } from '../ai/batch-runner';
 
@@ -70,6 +70,8 @@ export async function runPromptOnHighlight(
     highlight: Highlight,
     options: RunOptions = {}
 ): Promise<void> {
+    // Capture the target before asynchronous work or sidebar selection changes.
+    highlight = { ...highlight };
     const problem = plugin.aiService.checkReadiness();
     if (problem) {
         new Notice(t(problem.reasonKey));
@@ -89,23 +91,21 @@ export async function runPromptOnHighlight(
             void runDirectToComment(plugin, prompt, highlight, prepared);
             return;
         }
-        new AiResultModal(
-            plugin.app,
-            plugin,
+        void openAiResultView(plugin, {
             prompt,
-            {
+            source: {
                 sourcePath: highlight.filePath,
                 prepare: profile => preparePromptRun(plugin, prompt, highlight, { profile })
             },
             prepared,
-            {
+            actions: {
                 // A preview prompt is one the user said should not write
                 // anything, so it gets no button that would.
                 onInsert: prompt.outputTarget === 'preview'
                     ? undefined
                     : text => insertAiComment(plugin, highlight, text)
             }
-        ).open();
+        });
     };
 
     if (!plugin.settings.ai.confirmBeforeSend) {
@@ -157,17 +157,32 @@ async function runDirectToComment(
     });
 
     let streamed = '';
+    let thinking = '';
     try {
         const answer = await plugin.aiService.stream(prepared.messages, {
             profile: prepared.profile,
             signal: controller.signal,
+            // Running this again is a request for another answer, not for the
+            // last one back: this path writes straight into the note, so a
+            // cached reply would arrive as a duplicate of the comment already
+            // there. The preview modal keeps the cache — reopening a panel is
+            // the case it exists for.
+            bypassCache: true,
             onDelta: chunk => {
                 streamed += chunk;
                 progressEl.setText(tail(streamed, PROGRESS_TAIL));
             },
+            // A reasoning model says nothing for a while first; showing the
+            // thinking is what keeps the notice from looking stuck.
+            onReasoning: chunk => {
+                if (streamed) return;
+                thinking += chunk;
+                progressEl.setText(tail(thinking, PROGRESS_TAIL));
+            },
             onFallback: () => {
                 // The partial text belongs to an attempt being redone.
                 streamed = '';
+                thinking = '';
                 progressEl.setText('');
             }
         });
@@ -197,7 +212,7 @@ function tail(text: string, limit: number): string {
 function openEditorFor(plugin: HighlightCommentsPlugin, filePath: string): Editor | null {
     for (const leaf of plugin.app.workspace.getLeavesOfType('markdown')) {
         const view = leaf.view;
-        if (view instanceof MarkdownView && view.file?.path === filePath && view.editor) {
+        if (view instanceof MarkdownView && view.file?.path === filePath && view.getMode() === 'source' && view.editor) {
             return view.editor;
         }
     }
@@ -363,7 +378,13 @@ export async function runPromptOnHighlights(
             const prepared = await preparePromptRun(plugin, prompt, highlight);
             const answer = await plugin.aiService.complete(prepared.messages, {
                 profile: prepared.profile,
-                signal
+                signal,
+                // Writes into the note, so the same reasoning as the single
+                // direct-to-comment run: re-running a batch must produce new
+                // answers, not a second copy of the last ones. Two highlights
+                // with identical text still each get their own request, which
+                // is the price of never writing a stale answer.
+                bypassCache: true
             });
             plugin.recordAiUsage(answer);
 

@@ -44,7 +44,7 @@ export function variablesForScope(scope: PromptScope): readonly PromptVariableNa
 /** The output targets a scope can use; see PromptOutputTarget. */
 const SCOPE_OUTPUT_TARGETS: Record<PromptScope, readonly PromptOutputTarget[]> = {
     highlight: ['both', 'preview', 'comment'],
-    note: ['preview', 'append', 'highlights']
+    note: ['preview', 'append', 'new-markdown', 'new-html', 'highlights']
 };
 
 export function outputTargetsFor(scope: PromptScope): readonly PromptOutputTarget[] {
