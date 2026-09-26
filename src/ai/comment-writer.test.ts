@@ -2,6 +2,7 @@ import {
     appendFootnoteDefinition,
     buildFootnote,
     canUseInlineFootnote,
+    commentEditsForHighlight,
     formatForFootnote,
     locateHighlight,
     nextFootnoteKey,
@@ -141,6 +142,58 @@ describe('locateHighlight', () => {
         expect(location?.matchStart).toBe(0);
     });
 
+    it('never falls back to == for a custom pattern, whose delimiters are its own', () => {
+        // The same text also appears as an ordinary highlight; attaching the
+        // comment there would put it on a different highlight entirely.
+        const content = 'a ==custom== b';
+        expect(locateHighlight(content, anchor({ text: 'custom', type: 'custom', fullMatch: '?~custom~?' })))
+            .toBeNull();
+    });
+
+    it('finds a highlight the note writes as a coloured <mark>', () => {
+        const content = 'before <mark style="background: #ffd700;">quote</mark> after';
+        const location = locateHighlight(content, anchor({ type: 'html', startOffset: 7 }));
+        expect(content.slice(location!.matchStart, location!.matchEnd))
+            .toBe('<mark style="background: #ffd700;">quote</mark>');
+    });
+
+    it('finds a <mark> even when the stored highlight still says ==text==', () => {
+        // Colouring a highlight rewrites its markup; until the next scan the
+        // sidebar's copy is a step behind, and the comment must still land.
+        const content = 'before <mark style="background: #ffd700;">quote</mark> after';
+        const location = locateHighlight(content, anchor({ startOffset: 7 }));
+        expect(location?.matchStart).toBe(content.indexOf('<mark'));
+    });
+
+    it('finds the other HTML highlight forms', () => {
+        const span = '<span style="background:#ff0">quote</span>';
+        expect(locateHighlight(span, anchor({ type: 'html' }))?.matchEnd).toBe(span.length);
+
+        const font = '<font color="red">quote</font>';
+        expect(locateHighlight(font, anchor({ type: 'html' }))?.matchEnd).toBe(font.length);
+    });
+
+    it('prefers markdown over HTML when both hold the same text', () => {
+        const content = '==quote== and <mark>quote</mark>';
+        expect(locateHighlight(content, anchor({ startOffset: 0 }))?.matchStart).toBe(0);
+    });
+
+    it('attaches after a footnote already on an HTML highlight', () => {
+        const content = '<mark>quote</mark>[^1] rest';
+        const location = locateHighlight(content, anchor({ type: 'html' }));
+        expect(location?.insertAt).toBe('<mark>quote</mark>[^1]'.length);
+    });
+
+    it('falls back to the generic HTML form when the stored markup is stale', () => {
+        // Recoloured in the note since the sidebar last scanned it.
+        const content = '<mark style="background: #ff0000;">quote</mark>';
+        const location = locateHighlight(content, anchor({
+            type: 'html',
+            fullMatch: '<mark style="background: #ffd700;">quote</mark>'
+        }));
+        expect(location?.matchEnd).toBe(content.length);
+    });
+
     it('returns null when the highlight is gone', () => {
         expect(locateHighlight('nothing here', anchor({}))).toBeNull();
     });
@@ -193,6 +246,70 @@ describe('writeCommentForHighlight', () => {
 
     it('writes nothing when the highlight cannot be found', () => {
         expect(writeCommentForHighlight('the text was edited', anchor, 'comment', true)).toBeNull();
+    });
+});
+
+describe('commentEditsForHighlight', () => {
+    const anchor: HighlightAnchor = { text: 'quote', startOffset: 0 };
+
+    /** Applies the edits the way an editor would, in the order given. */
+    const apply = (content: string, edits: ReturnType<typeof commentEditsForHighlight>): string => {
+        let result = content;
+        for (const edit of edits!) {
+            result = result.slice(0, edit.from) + edit.text + result.slice(edit.to);
+        }
+        return result;
+    };
+
+    const sameAsWholeDocument = (content: string, preferInline: boolean) => {
+        const edits = commentEditsForHighlight(content, anchor, 'a tidy comment', preferInline);
+        const whole = writeCommentForHighlight(content, anchor, 'a tidy comment', preferInline);
+        expect(apply(content, edits)).toBe(whole!.content);
+    };
+
+    it('produces the same text as the whole-document write, inline', () => {
+        sameAsWholeDocument('a ==quote== b', true);
+    });
+
+    it('produces the same text as the whole-document write, standard', () => {
+        sameAsWholeDocument('a ==quote== b', false);
+    });
+
+    it('matches when the note already ends in a definition', () => {
+        sameAsWholeDocument('==quote== body\n\n[^1]: first', false);
+    });
+
+    it('matches when the note ends in trailing whitespace', () => {
+        sameAsWholeDocument('==quote== body\n\n  \n\t', false);
+    });
+
+    it('matches for a highlight at the very end of the note', () => {
+        sameAsWholeDocument('body ==quote==', false);
+    });
+
+    it('matches for an HTML highlight', () => {
+        const content = 'a <mark style="background: #ffd700;">quote</mark> b';
+        const html: HighlightAnchor = { text: 'quote', startOffset: 2, type: 'html' };
+        const edits = commentEditsForHighlight(content, html, 'note', false);
+        expect(apply(content, edits))
+            .toBe(writeCommentForHighlight(content, html, 'note', false)!.content);
+    });
+
+    it('inserts an inline footnote as a single edit', () => {
+        const edits = commentEditsForHighlight('a ==quote== b', anchor, 'note', true);
+        expect(edits).toEqual([{ text: '^[note]', from: 'a ==quote=='.length, to: 'a ==quote=='.length }]);
+    });
+
+    it('puts the end-of-note definition before the reference', () => {
+        // The reverse order would insert the reference first and leave the
+        // definition edit pointing at offsets that had already moved.
+        const edits = commentEditsForHighlight('==quote== body', anchor, 'note', false);
+        expect(edits).toHaveLength(2);
+        expect(edits![0].from).toBeGreaterThan(edits![1].from);
+    });
+
+    it('returns null when the highlight cannot be found', () => {
+        expect(commentEditsForHighlight('the text was edited', anchor, 'note', true)).toBeNull();
     });
 });
 

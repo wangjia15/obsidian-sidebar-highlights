@@ -107,6 +107,12 @@ export class OpenAiCompatibleProvider implements Provider {
                 usage.promptTokens = pickNumber(json, 'usage', 'prompt_tokens') ?? usage.promptTokens;
                 usage.completionTokens = pickNumber(json, 'usage', 'completion_tokens') ?? usage.completionTokens;
 
+                // Reasoning models send their thinking here first and their
+                // answer only afterwards — minutes later, on a long document.
+                // It is reported but never returned: the answer is the answer.
+                const reasoning = pickString(json, 'choices', 0, 'delta', 'reasoning_content');
+                if (reasoning) handlers.onReasoning?.(reasoning);
+
                 const delta = pick(json, 'choices', 0, 'delta', 'content');
                 const chunk = typeof delta === 'string' ? delta : flattenContentParts(delta);
                 if (!chunk) return undefined;

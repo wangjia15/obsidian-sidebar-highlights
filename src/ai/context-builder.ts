@@ -125,6 +125,71 @@ export function buildVariables(
     return variables;
 }
 
+/** What a whole-note prompt is assembled from. */
+export interface NoteContextSource {
+    /** The note's full text, frontmatter and all. */
+    noteContent: string;
+    noteTitle?: string;
+    filePath?: string;
+    /** The note's highlights in document order, each with its comments. */
+    highlights?: { text: string; comments?: string[] }[];
+}
+
+/**
+ * The note's highlights as a markdown list, comments nested under the passage
+ * they belong to. Lets a whole-note prompt reason about what the reader already
+ * marked, rather than only about the text.
+ */
+export function formatHighlightList(highlights: NoteContextSource['highlights']): string {
+    if (!highlights?.length) return '';
+
+    const lines: string[] = [];
+    for (const highlight of highlights) {
+        const text = highlight.text.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        lines.push(`- ${text}`);
+        for (const comment of highlight.comments ?? []) {
+            const flat = comment.replace(/\s+/g, ' ').trim();
+            if (flat) lines.push(`    - ${flat}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+/**
+ * Resolves the values a whole-note template can reference.
+ *
+ * Unlike the highlight path, the note text is not gated behind
+ * `includeNoteContext`: running a prompt whose entire subject is the document
+ * *is* the decision to send the document, and gating it would leave the feature
+ * silently answering about nothing. The pre-send confirmation still quotes the
+ * exact size, and `noteCharLimit` still bounds it.
+ */
+export function buildNoteVariables(
+    source: NoteContextSource,
+    settings: AiSettings,
+    options: ContextOptions = {}
+): PromptVariables {
+    const limit = Math.max(0, settings.noteCharLimit);
+
+    const variables: PromptVariables = {
+        note: truncate(source.noteContent, limit),
+        noteTitle: source.noteTitle?.trim() || undefined,
+        filePath: source.filePath || undefined,
+        targetLang:
+            options.targetLanguage?.trim() ||
+            settings.defaultTargetLanguage.trim() ||
+            options.fallbackLanguage ||
+            undefined,
+        input: options.input?.trim() || undefined
+    };
+
+    const list = formatHighlightList(source.highlights);
+    if (list) variables.highlights = truncate(list, limit);
+
+    return variables;
+}
+
 /**
  * How many characters a run would send. Shown in the pre-send confirmation, so
  * the user is agreeing to a concrete amount rather than to the idea of one.

@@ -1,6 +1,8 @@
+import { rearrangeMindmap } from './src/utils/mindmap-builder';
 // main.ts
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, ColorComponent } from 'obsidian';
+import { App, Editor, MarkdownFileInfo, MarkdownView, Menu, MenuItem, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, ColorComponent, normalizePath } from 'obsidian';
 import { HighlightsSidebarView } from './src/views/sidebar-view';
+import { AiResultView, VIEW_TYPE_AI_RESULT } from './src/views/ai-result-view';
 import { InlineFootnoteManager } from './src/managers/inline-footnote-manager';
 import { ExcludedFilesModal } from './src/modals/excluded-files-modal';
 import { BackupSelectorModal } from './src/modals/backup-selector-modal';
@@ -9,12 +11,25 @@ import { HtmlHighlightParser } from './src/utils/html-highlight-parser';
 import { extractFootnoteDefinitions, removeFootnoteDefinition } from './src/utils/footnote-parser';
 import { hasDelimiterInsideRanges } from './src/utils/range-exclusion';
 import { SortMode } from './src/utils/sort-order';
+import { resolveHighlightColor } from './src/utils/color-labels';
+import { createExistingHighlightMatcher } from './src/utils/highlight-reconcile';
+import { createHighlightMarkup, recolorHighlightMarkup } from './src/utils/highlight-markup';
+import { FileFolderSuggest } from './src/utils/file-folder-suggest';
+import {
+    EXCALIDRAW_EXTENSION,
+    MINDMAP_FLAG_KEY,
+    MINDMAP_SOURCES_KEY,
+    buildExcalidrawMindmapFile,
+    sanitizeFileName,
+    type MindmapNoteInput
+} from './src/utils/excalidraw-mindmap';
 import { i18n, t } from './src/i18n';
 import { AiService } from './src/ai/ai-service';
 import { DEFAULT_AI_SETTINGS, addUsage, cloneAiSettings, usageMonth, type AiResult, type AiSettings } from './src/ai/types';
 import { renderAiSettings } from './src/settings/ai-settings-section';
 import { enabledPrompts } from './src/ai/prompt-library';
-import { runPromptOnHighlight, runPromptOnHighlights } from './src/views/ai-actions';
+import { addAiMenuItems, aiAvailable, runPromptOnHighlight, runPromptOnHighlights } from './src/views/ai-actions';
+import { runNotePrompt } from './src/views/note-ai-actions';
 
 export interface Highlight {
     id: string;
@@ -170,6 +185,10 @@ export interface CommentPluginSettings {
     displayModes: DisplayMode[]; // Saved display mode configurations
     currentDisplayModeId: string | null; // Currently active display mode ID
     maxAutomaticBackups: number; // How many automatic backups to retain (manual backups are never deleted)
+    excalidrawExportFolder: string; // Folder for exported Excalidraw mindmaps ('' = alongside the source note)
+    excalidrawIncludeComments: boolean; // Draw each highlight's comments as child nodes of the mindmap
+    excalidrawAutoSync: boolean; // Refresh a note's mindmap whenever its highlights or comments change
+    excalidrawOpenBeside: boolean; // Open a mindmap in a split beside the note rather than replacing it
     ai: AiSettings; // AI providers, prompts and rich-content rendering (see src/ai/types.ts)
 }
 
@@ -234,6 +253,10 @@ const DEFAULT_SETTINGS: CommentPluginSettings = {
     displayModes: [], // Empty array by default
     currentDisplayModeId: null, // No active display mode by default
     maxAutomaticBackups: 20, // Keep the 20 most recent automatic backups by default
+    excalidrawExportFolder: '', // Save the mindmap next to the note it came from
+    excalidrawIncludeComments: true, // A highlight's comments are half the point of the map
+    excalidrawAutoSync: false, // Refreshing rewrites the drawing, so it is opt-in
+    excalidrawOpenBeside: true, // Note on one side, map on the other
     ai: DEFAULT_AI_SETTINGS // AI off by default: no configuration means no network calls
 }
 
@@ -242,6 +265,16 @@ const MIN_AUTOMATIC_BACKUPS = 1;
 const MAX_AUTOMATIC_BACKUPS = 200;
 
 const VIEW_TYPE_HIGHLIGHTS = 'highlights-sidebar';
+
+/** The view type the Obsidian Excalidraw plugin registers for its drawings. */
+const EXCALIDRAW_VIEW_TYPE = 'excalidraw';
+
+/**
+ * How long after the last edit an auto-synced mindmap is redrawn. Long enough
+ * that typing a comment does not rewrite the drawing on every keystroke, short
+ * enough that the map is current by the time the user looks at it.
+ */
+const MINDMAP_AUTO_SYNC_DELAY = 2500;
 
 // Shapes of private Obsidian APIs this plugin touches (not part of the public typings).
 interface WorkspaceWithHoverLinkSource {
@@ -263,6 +296,24 @@ export type StoredPluginData = Partial<CommentPluginSettings> & {
     originalTimestamp?: string;
 };
 
+/**
+ * The source markup to remember for a match, or undefined when the markup can
+ * be reconstructed from the text alone.
+ *
+ * Custom patterns need it because their delimiters are user-defined. HTML
+ * highlights need it because `<mark style="…">`, `<span class="…">` and
+ * `<font color="…">` all reduce to the same stored text, so without the markup
+ * nothing that later has to find the highlight in the note — attaching a
+ * comment, recolouring it — knows what to look for.
+ */
+function storedFullMatch(
+    match: RegExpExecArray,
+    type: 'highlight' | 'comment' | 'html',
+    isCustomPattern?: boolean
+): string | undefined {
+    return isCustomPattern || type === 'html' ? match[0] : undefined;
+}
+
 export default class HighlightCommentsPlugin extends Plugin {
     settings: CommentPluginSettings;
     highlights: Map<string, Highlight[]> = new Map();
@@ -279,6 +330,8 @@ export default class HighlightCommentsPlugin extends Plugin {
     private sidebarViews: Set<HighlightsSidebarView> = new Set();
     private ribbonIconEl: HTMLElement | null = null;
     private detectHighlightsTimeout: number | null = null;
+    /** Pending auto-sync redraws, keyed by the note path that triggered them. */
+    private mindmapSyncTimers: Map<string, number> = new Map();
     public selectedHighlightId: string | null = null;
     public collectionCommands: Set<string> = new Set(); // Track registered collection commands
     private aiPromptCommands: Set<string> = new Set(); // Track registered AI prompt commands
@@ -330,6 +383,10 @@ export default class HighlightCommentsPlugin extends Plugin {
             }
         );
 
+        // AI answers render into a workspace tab rather than a modal, so a long
+        // run can be left to fill in while the vault stays workable.
+        this.registerView(VIEW_TYPE_AI_RESULT, (leaf) => new AiResultView(leaf, this));
+
         this.ribbonIconEl = this.addRibbonIcon('highlighter', 'Open highlights', () => {
             void this.activateView();
         });
@@ -350,18 +407,45 @@ export default class HighlightCommentsPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'export-excalidraw-mindmap',
+            name: t('commands.exportExcalidraw'),
+            checkCallback: (checking: boolean) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file) return false;
+                if (!checking) {
+                    void this.exportHighlightsToExcalidraw(this.highlights.get(file.path) ?? [], {
+                        baseName: file.basename,
+                        sourceFile: file
+                    });
+                }
+                return true;
+            }
+        });
+
+        // Refresh a map that already exists. Works from either side: with the
+        // drawing open it redraws itself, with a note open it redraws that
+        // note's map without the user having to go and find it.
+        this.addCommand({
+            id: 'sync-excalidraw-mindmap',
+            name: t('commands.syncExcalidraw'),
+            checkCallback: (checking: boolean) => {
+                const active = this.app.workspace.getActiveFile();
+                if (!active) return false;
+
+                const target = this.isOurMindmap(active) ? active : this.findMindmapForNote(active);
+                if (!target) return false;
+                if (!checking) void this.syncExcalidrawMindmap(target);
+                return true;
+            }
+        });
+
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu, editor, view) => {
                 if (editor.getSelection()) {
-                    menu.addItem((item) => {
-                        item
-                            .setTitle('Create highlight')
-                            .setIcon('highlighter')
-                            .onClick(() => {
-                                void this.createHighlight(editor);
-                            });
-                    });
+                    this.addCreateHighlightMenuItems(menu, editor);
                 }
+                this.addEditorAiMenuItems(menu, editor, view);
             })
         );
 
@@ -442,6 +526,12 @@ export default class HighlightCommentsPlugin extends Plugin {
             this.ribbonIconEl.remove();
             this.ribbonIconEl = null;
         }
+
+        // Pending auto-sync redraws would otherwise fire against a dead plugin
+        for (const timer of this.mindmapSyncTimers.values()) {
+            window.clearTimeout(timer);
+        }
+        this.mindmapSyncTimers.clear();
 
         // Drop the tracked views. Obsidian detaches the leaves it owns, but a view
         // another plugin hosts on a detached leaf never gets that onClose.
@@ -601,15 +691,24 @@ export default class HighlightCommentsPlugin extends Plugin {
         }
     }
 
-    async createHighlight(editor: Editor) {
+    /**
+     * Wrap the selection in highlight markup and track it.
+     *
+     * With no colour that is plain `==…==`. With one it is
+     * `<mark style="background: …">`, so the note itself shows the colour —
+     * in the editor, in reading view, and in any other app that renders the
+     * note. The plugin reads the colour straight back out of that markup, so it
+     * survives without depending on stored state.
+     */
+    async createHighlight(editor: Editor, color?: string) {
         const selection = editor.getSelection();
         if (!selection) {
-            new Notice('Please select some text first');
+            new Notice(t('notices.noTextSelected'));
             return;
         }
         const file = this.app.workspace.getActiveFile();
         if (!file) {
-            new Notice('No active file');
+            new Notice(t('notices.noActiveFile'));
             return;
         }
 
@@ -628,16 +727,467 @@ export default class HighlightCommentsPlugin extends Plugin {
             endOffset: toOffset,
             filePath: file.path,
             createdAt: Date.now(),
+            color: color || undefined,
+            // Both are what the re-scan a moment from now matches on. Without
+            // them this highlight reads as a native comment of unknown kind and
+            // is replaced by a fresh one, taking the colour with it.
+            isNativeComment: false,
+            type: color ? 'html' : 'highlight',
         };
 
         const fileHighlights = this.highlights.get(file.path) || [];
         fileHighlights.push(highlight);
         this.highlights.set(file.path, fileHighlights);
 
-        const highlightedText = `==${selection}==`;
-        editor.replaceSelection(highlightedText);
+        editor.replaceSelection(createHighlightMarkup(selection, color));
+        // The colour only survives if it is on disk before the re-scan the edit
+        // triggers reconciles this file against stored highlights.
+        void this.saveSettings();
         this.refreshSidebar();
-        new Notice('Highlight created');
+        new Notice(t('notices.highlightCreated'));
+    }
+
+    /**
+     * Set a highlight's colour, in the note where possible.
+     *
+     * `==text==` becomes `<mark style="background: …">` and back again when the
+     * colour is cleared, so the colour is visible in the note rather than only
+     * in the sidebar. Markup this plugin does not own — a native comment, a
+     * `<span>`, another plugin's pattern — keeps the old behaviour of recording
+     * the colour in plugin data and leaving the note untouched.
+     */
+    async setHighlightColor(highlight: Highlight, color: string): Promise<void> {
+        const rewritten = await this.rewriteHighlightColorInNote(highlight, color);
+        if (!rewritten) {
+            this.updateHighlight(highlight.id, { color: color || undefined }, highlight.filePath);
+        }
+    }
+
+    /**
+     * Rewrite the highlight's own markup in its note. Returns false when the
+     * note could not be touched, so the caller can fall back.
+     */
+    private async rewriteHighlightColorInNote(highlight: Highlight, color: string): Promise<boolean> {
+        if (highlight.isNativeComment) return false;
+
+        const file = this.app.vault.getAbstractFileByPath(highlight.filePath);
+        if (!(file instanceof TFile)) return false;
+
+        try {
+            const content = await this.app.vault.read(file);
+            const markup = content.slice(highlight.startOffset, highlight.endOffset);
+
+            // Offsets go stale between scans. Rewriting a range that no longer
+            // holds this highlight would corrupt the note, so bail instead.
+            if (!markup.includes(highlight.text)) return false;
+
+            const replacement = recolorHighlightMarkup(markup, color);
+            if (replacement === null || replacement === markup) return replacement === markup;
+
+            const updated = content.slice(0, highlight.startOffset) + replacement + content.slice(highlight.endOffset);
+            await this.app.vault.modify(file, updated);
+
+            // `<mark …>` is some 40 characters longer than `==…==`, which moves
+            // every highlight after it. Booking that in before the rescan keeps
+            // them matching on position rather than leaning on its tolerance for
+            // drift, which a long colour declaration could exceed.
+            this.shiftStoredOffsets(highlight, replacement.length - markup.length);
+
+            // vault.modify does not run the editor-change pipeline, so the scan
+            // that picks the new colour out of the markup has to be asked for.
+            this.detectAndStoreMarkdownHighlights(updated, file);
+            this.refreshSidebar();
+            return true;
+        } catch (error) {
+            console.error('Failed to write the highlight colour into the note:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Move the stored offsets in a note to account for `delta` characters added
+     * at `edited`: the edited highlight grows by it, and everything that started
+     * after it slides along.
+     */
+    private shiftStoredOffsets(edited: Highlight, delta: number): void {
+        if (delta === 0) return;
+
+        const fileHighlights = this.highlights.get(edited.filePath);
+        if (!fileHighlights) return;
+
+        this.highlights.set(edited.filePath, fileHighlights.map(highlight => {
+            if (highlight.id === edited.id) {
+                return { ...highlight, endOffset: highlight.endOffset + delta };
+            }
+            if (highlight.startOffset >= edited.endOffset) {
+                return {
+                    ...highlight,
+                    startOffset: highlight.startOffset + delta,
+                    endOffset: highlight.endOffset + delta
+                };
+            }
+            return highlight;
+        }));
+    }
+
+    /**
+     * The palette, in the order the sidebar's colour picker shows it.
+     * `undefined` for the entry that leaves the highlight on the vault default.
+     */
+    getHighlightColorChoices(): Array<{ slot: keyof CommentPluginSettings['customColors']; value: string; label: string }> {
+        const slots: Array<keyof CommentPluginSettings['customColors']> = ['yellow', 'red', 'teal', 'blue', 'green'];
+        return slots.map(slot => ({
+            slot,
+            value: this.settings.customColors[slot],
+            label: this.settings.customColorNames[slot]?.trim() || t(`settings.colorNames.slots.${slot}`)
+        }));
+    }
+
+    /**
+     * "Create highlight" in the editor's right-click menu, with the palette as a
+     * submenu so a highlight can be given its colour as it is made.
+     *
+     * Obsidian supports submenus at runtime but `setSubmenu` is absent from the
+     * published typings, so it is probed rather than assumed; without it the
+     * colours are added as flat items and the feature still works.
+     */
+    private addCreateHighlightMenuItems(menu: Menu, editor: Editor): void {
+        const choices = this.getHighlightColorChoices();
+
+        menu.addItem((item) => {
+            item.setTitle(t('contextMenu.createHighlight')).setIcon('highlighter');
+
+            const submenuCapable = item as MenuItem & { setSubmenu?: () => Menu };
+            if (typeof submenuCapable.setSubmenu !== 'function') {
+                // No submenu support: this entry keeps the plain, colourless behaviour
+                // and the colours follow it as siblings below.
+                item.onClick(() => { void this.createHighlight(editor); });
+                for (const choice of choices) {
+                    menu.addItem((colorItem) => colorItem
+                        .setTitle(t('contextMenu.createHighlightWithColor', { color: choice.label }))
+                        .setIcon('highlighter')
+                        .onClick(() => { void this.createHighlight(editor, choice.value); }));
+                }
+                return;
+            }
+
+            try {
+                const submenu = submenuCapable.setSubmenu();
+                submenu.addItem((sub) => sub
+                    .setTitle(t('contextMenu.defaultColor'))
+                    .setIcon('highlighter')
+                    .onClick(() => { void this.createHighlight(editor); }));
+                submenu.addSeparator();
+                for (const choice of choices) {
+                    submenu.addItem((sub) => sub
+                        .setTitle(choice.label)
+                        .setIcon('palette')
+                        .onClick(() => { void this.createHighlight(editor, choice.value); }));
+                }
+            } catch (error) {
+                console.warn('Failed to build the highlight colour submenu, falling back to a plain item:', error);
+                item.onClick(() => { void this.createHighlight(editor); });
+            }
+        });
+    }
+
+    /**
+     * "AI" in the editor's right-click menu, when the cursor is inside a
+     * highlight: every enabled prompt, run straight into a comment on that
+     * highlight. No preview modal — the answer lands as a footnote and the
+     * sidebar shows it, which is what picking a prompt from here means.
+     */
+    private addEditorAiMenuItems(menu: Menu, editor: Editor, view: MarkdownView | MarkdownFileInfo): void {
+        if (!aiAvailable(this)) return;
+
+        const file = view.file;
+        if (!file) return;
+
+        const highlight = this.highlightAt(file.path, editor.posToOffset(editor.getCursor('from')));
+        if (!highlight) return;
+
+        menu.addItem((item) => {
+            item.setTitle(t('contextMenu.aiComment')).setIcon('sparkles');
+
+            const submenuCapable = item as MenuItem & { setSubmenu?: () => Menu };
+            if (typeof submenuCapable.setSubmenu !== 'function') {
+                // Without submenus each prompt becomes its own entry, prefixed so
+                // it is clear they belong together.
+                addAiMenuItems(menu, this, highlight, { forceComment: true });
+                return;
+            }
+
+            try {
+                addAiMenuItems(submenuCapable.setSubmenu(), this, highlight, { forceComment: true });
+            } catch (error) {
+                console.warn('Failed to build the AI submenu, falling back to flat items:', error);
+                addAiMenuItems(menu, this, highlight, { forceComment: true });
+            }
+        });
+    }
+
+    /** The highlight covering an offset in a note, if any. */
+    private highlightAt(filePath: string, offset: number): Highlight | null {
+        const candidates = this.highlights.get(filePath) ?? [];
+        return candidates.find(highlight =>
+            offset >= highlight.startOffset && offset <= highlight.endOffset
+        ) ?? null;
+    }
+
+    /**
+     * Draw the given highlights as an Excalidraw mind map and open it.
+     *
+     * The map mirrors the notes it came from: note title at the root, headings
+     * nested underneath, each highlight under its heading, each comment under its
+     * highlight, and every highlight node filled with its own colour.
+     */
+    async exportHighlightsToExcalidraw(
+        highlights: Highlight[],
+        options: { baseName: string; sourceFile?: TFile | null; rootLabel?: string }
+    ): Promise<TFile | null> {
+        const content = this.buildMindmapContent(highlights, options.rootLabel || options.baseName, options.sourceFile ? [options.sourceFile.path] : []);
+
+        if (!content) {
+            new Notice(t('notices.excalidrawNothingToExport'));
+            return null;
+        }
+
+        try {
+            const folder = await this.resolveExcalidrawFolder(options.sourceFile ?? null);
+            const target = this.mindmapFilePath(folder, sanitizeFileName(options.baseName));
+
+            // Refreshing the map we made last time is what the user means by
+            // exporting the same scope twice; a drawing we did not make is left
+            // alone and the export goes to a free name beside it.
+            const existing = this.app.vault.getAbstractFileByPath(target);
+            if (existing instanceof TFile && this.isOurMindmap(existing)) {
+                await this.app.vault.modify(existing, content);
+                new Notice(t('notices.excalidrawUpdated', { path: existing.path }));
+                await this.openMindmap(existing);
+                await rearrangeMindmap(this.app, existing);
+                return existing;
+            }
+
+            const path = existing ? this.availableFilePath(folder, sanitizeFileName(options.baseName)) : target;
+            const file = await this.app.vault.create(path, content);
+            new Notice(t('notices.excalidrawExported', { path: file.path }));
+            await this.openMindmap(file);
+            await rearrangeMindmap(this.app, file);
+            return file;
+        } catch (error) {
+            console.error('Failed to export highlights to Excalidraw:', error);
+            new Notice(t('notices.excalidrawExportFailed', {
+                reason: error instanceof Error ? error.message : String(error)
+            }));
+            return null;
+        }
+    }
+
+    /**
+     * Redraw a mind map we made earlier from the notes it records, picking up
+     * highlights, comments and colours as they are now.
+     *
+     * The drawing is rebuilt rather than merged into: positions and anything
+     * added by hand inside it are replaced. Element ids are derived from where a
+     * node sits in the map, so a node that is still there keeps its id and any
+     * `^id` reference to it survives.
+     */
+    async syncExcalidrawMindmap(mindmapFile: TFile, options: { quiet?: boolean } = {}): Promise<boolean> {
+        // An auto-sync happens while the user is doing something else, so it
+        // reports only failures; an explicit one confirms it did something.
+        const report = (message: string) => { if (!options.quiet) new Notice(message); };
+
+        const sources = this.mindmapSources(mindmapFile);
+        if (!sources) {
+            report(t('notices.excalidrawNotAMindmap'));
+            return false;
+        }
+
+        const highlights: Highlight[] = [];
+        for (const path of sources) {
+            highlights.push(...(this.highlights.get(path) ?? []));
+        }
+
+        const content = this.buildMindmapContent(highlights, mindmapFile.basename.replace(/\.excalidraw$/, ''), sources);
+        if (!content) {
+            report(t('notices.excalidrawNothingToExport'));
+            return false;
+        }
+
+        try {
+            await this.app.vault.modify(mindmapFile, content);
+            await rearrangeMindmap(this.app, mindmapFile);
+            report(t('notices.excalidrawUpdated', { path: mindmapFile.path }));
+            return true;
+        } catch (error) {
+            console.error('Failed to sync the Excalidraw mindmap:', error);
+            new Notice(t('notices.excalidrawExportFailed', {
+                reason: error instanceof Error ? error.message : String(error)
+            }));
+            return false;
+        }
+    }
+
+    /**
+     * The map this scope was exported to, if we made one. Resolves the same
+     * folder the export would, but without creating it — this runs while a menu
+     * is being built, and a menu label should not have side effects.
+     */
+    findExistingMindmap(baseName: string, sourceFile: TFile | null): TFile | null {
+        const configured = this.settings.excalidrawExportFolder.trim();
+        const parent = sourceFile?.parent?.path ?? '';
+        const folder = configured ? normalizePath(configured) : (parent === '/' ? '' : parent);
+
+        const candidate = this.app.vault.getAbstractFileByPath(
+            this.mindmapFilePath(folder, sanitizeFileName(baseName))
+        );
+        return candidate instanceof TFile && this.isOurMindmap(candidate) ? candidate : null;
+    }
+
+    /** The `.excalidraw.md` file this note's highlights were exported to, if there is one. */
+    findMindmapForNote(note: TFile): TFile | null {
+        return this.findExistingMindmap(note.basename, note);
+    }
+
+    /** True for a drawing this plugin generated, which is the only kind it will overwrite. */
+    isOurMindmap(file: TFile): boolean {
+        return this.mindmapSources(file) !== null;
+    }
+
+    /**
+     * Notes a generated map was built from, or null when the file is not one of
+     * ours. Read from frontmatter through the metadata cache, since the
+     * Excalidraw plugin rewrites the file but leaves keys it does not own alone.
+     */
+    private mindmapSources(file: TFile): string[] | null {
+        const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!frontmatter || frontmatter[MINDMAP_FLAG_KEY] !== true) return null;
+
+        const sources: unknown = frontmatter[MINDMAP_SOURCES_KEY];
+        if (Array.isArray(sources)) {
+            return sources.filter((path): path is string => typeof path === 'string');
+        }
+        return typeof sources === 'string' ? [sources] : [];
+    }
+
+    /** Turn highlights into `.excalidraw.md` content, grouped by the note each came from. */
+    private buildMindmapContent(highlights: Highlight[], rootLabel: string, sources: string[] = []): string | null {
+        const byFile = new Map<string, Highlight[]>(sources.map(path => [path, []]));
+        for (const highlight of highlights) {
+            const bucket = byFile.get(highlight.filePath);
+            if (bucket) bucket.push(highlight);
+            else byFile.set(highlight.filePath, [highlight]);
+        }
+
+        const notes: MindmapNoteInput[] = [];
+        for (const [filePath, fileHighlights] of [...byFile].sort((a, b) => a[0].localeCompare(b[0]))) {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            const headings = file instanceof TFile
+                ? (this.app.metadataCache.getFileCache(file)?.headings ?? []).map(heading => ({
+                    heading: heading.heading,
+                    level: heading.level,
+                    line: heading.position.start.line
+                }))
+                : [];
+
+            notes.push({
+                title: file instanceof TFile ? file.basename : filePath.replace(/\.md$/, ''),
+                path: filePath,
+                headings,
+                highlights: fileHighlights.map(highlight => ({
+                    text: highlight.text,
+                    line: highlight.line,
+                    color: resolveHighlightColor(highlight.color, this.settings.highlightColor),
+                    // A native comment is its own comment text, so listing its
+                    // footnotes again would draw the same words twice.
+                    comments: highlight.isNativeComment ? [] : (highlight.footnoteContents ?? [])
+                }))
+            });
+        }
+
+        return buildExcalidrawMindmapFile(notes, {
+            rootLabel,
+            includeComments: this.settings.excalidrawIncludeComments,
+            sources: [...byFile.keys()].sort()
+        });
+    }
+
+    /**
+     * Show a mindmap: beside the note rather than over it, and as a drawing
+     * rather than as the markdown it is stored in.
+     *
+     * A pane already showing this file is reused, so refreshing repeatedly does
+     * not stack up panes. Otherwise it opens in a vertical split, which is the
+     * note-and-map-side-by-side layout the map is meant to be read in.
+     *
+     * The Excalidraw plugin owns the `excalidraw` view type; asking for it by
+     * name means the drawing opens rather than its markdown source. Without that
+     * plugin installed the request fails and the file opens as ordinary markdown,
+     * which is the honest fallback.
+     */
+    private async openMindmap(file: TFile): Promise<void> {
+        const alreadyOpen = this.app.workspace.getLeavesOfType(EXCALIDRAW_VIEW_TYPE)
+            .concat(this.app.workspace.getLeavesOfType('markdown'))
+            .find(leaf => (leaf.view as { file?: TFile | null }).file?.path === file.path);
+
+        if (alreadyOpen) {
+            await this.app.workspace.revealLeaf(alreadyOpen);
+            return;
+        }
+
+        const leaf = this.settings.excalidrawOpenBeside
+            ? this.app.workspace.getLeaf('split', 'vertical')
+            : this.app.workspace.getLeaf(true);
+
+        try {
+            await leaf.setViewState({
+                type: EXCALIDRAW_VIEW_TYPE,
+                state: { file: file.path },
+                active: true
+            });
+            // setViewState resolves even for a view type nothing registered, so
+            // the result is checked rather than trusted.
+            if (leaf.view.getViewType() === EXCALIDRAW_VIEW_TYPE) return;
+        } catch (error) {
+            console.warn('Could not open the mindmap as a drawing, falling back to markdown:', error);
+        }
+
+        await leaf.openFile(file);
+    }
+
+    /**
+     * Folder the export lands in: the configured one (created if missing), else
+     * the folder of the note the highlights came from, else the vault root.
+     */
+    private async resolveExcalidrawFolder(sourceFile: TFile | null): Promise<string> {
+        const configured = this.settings.excalidrawExportFolder.trim();
+        if (!configured) {
+            const parent = sourceFile?.parent?.path ?? '';
+            return parent === '/' ? '' : parent;
+        }
+
+        const folder = normalizePath(configured);
+        if (!this.app.vault.getAbstractFileByPath(folder)) {
+            await this.app.vault.createFolder(folder);
+        }
+        return folder;
+    }
+
+    /** `<folder>/<name>.excalidraw.md` — where a map of this scope belongs. */
+    private mindmapFilePath(folder: string, baseName: string): string {
+        return `${folder ? `${folder}/` : ''}${baseName}${EXCALIDRAW_EXTENSION}`;
+    }
+
+    /** The same path, with a counter appended when it is taken by someone else's drawing. */
+    private availableFilePath(folder: string, baseName: string): string {
+        const prefix = folder ? `${folder}/` : '';
+        let candidate = `${prefix}${baseName}${EXCALIDRAW_EXTENSION}`;
+        let counter = 1;
+        while (this.app.vault.getAbstractFileByPath(candidate)) {
+            candidate = `${prefix}${baseName} ${counter}${EXCALIDRAW_EXTENSION}`;
+            counter++;
+        }
+        return candidate;
     }
 
     // Run fn against every open panel, so they all stay in step.
@@ -1774,6 +2324,25 @@ export default class HighlightCommentsPlugin extends Plugin {
         if (!this.settings.ai.enabled) return;
 
         for (const prompt of enabledPrompts(this.settings.ai.prompts)) {
+            // A whole-note prompt has one command, against the active note.
+            // Neither of the highlight commands below would mean anything for
+            // it: there is no selected highlight and nothing to batch over.
+            if (prompt.scope === 'note') {
+                const noteCommandId = `ai-note-prompt-${prompt.id}`;
+                this.addCommand({
+                    id: noteCommandId,
+                    name: t('commands.runAiPromptOnDocument', { name: prompt.name }),
+                    checkCallback: (checking: boolean) => {
+                        const file = this.app.workspace.getActiveFile();
+                        if (!file) return false;
+                        if (!checking) void runNotePrompt(this, prompt, file);
+                        return true;
+                    }
+                });
+                this.aiPromptCommands.add(noteCommandId);
+                continue;
+            }
+
             const commandId = `ai-prompt-${prompt.id}`;
             this.addCommand({
                 id: commandId,
@@ -2245,51 +2814,9 @@ export default class HighlightCommentsPlugin extends Plugin {
 
         const newHighlights: Highlight[] = [];
         const existingHighlightsForFile = this.highlights.get(file.path) || [];
-        const usedExistingHighlights = new Set<string>(); // Track which highlights we've already matched
-        
-        // Create a more robust matching system that considers text, position, and type
-        const findExistingHighlight = (text: string, startOffset: number, endOffset: number, isComment: boolean): Highlight | undefined => {
-            // First, try exact position match
-            let exactMatch = existingHighlightsForFile.find(h => 
-                !usedExistingHighlights.has(h.id) &&
-                h.text === text && 
-                h.startOffset === startOffset && 
-                h.endOffset === endOffset &&
-                h.isNativeComment === isComment
-            );
-            if (exactMatch) {
-                usedExistingHighlights.add(exactMatch.id);
-                return exactMatch;
-            }
-            
-            // If no exact match, try fuzzy position match (within 50 characters)
-            let fuzzyMatch = existingHighlightsForFile.find(h => 
-                !usedExistingHighlights.has(h.id) &&
-                h.text === text && 
-                Math.abs(h.startOffset - startOffset) <= 50 &&
-                h.isNativeComment === isComment
-            );
-            if (fuzzyMatch) {
-                usedExistingHighlights.add(fuzzyMatch.id);
-                return fuzzyMatch;
-            }
-            
-            // If still no match, try text-only match for highlights that might have moved significantly
-            let textMatch = existingHighlightsForFile.find(h => 
-                !usedExistingHighlights.has(h.id) &&
-                h.text === text && 
-                h.isNativeComment === isComment &&
-                !existingHighlightsForFile.some(other => 
-                    other !== h && other.text === text && other.isNativeComment === isComment
-                ) // Only if it's the only highlight with this text
-            );
-            if (textMatch) {
-                usedExistingHighlights.add(textMatch.id);
-                return textMatch;
-            }
-            
-            return undefined;
-        };
+
+        // Exact position, then nearby, then text alone — see highlight-reconcile.ts.
+        const findExistingHighlight = createExistingHighlightMatcher(existingHighlightsForFile);
 
         // Extract all footnotes from the content
         const footnoteMap = this.extractFootnotes(content);
@@ -2585,8 +3112,7 @@ export default class HighlightCommentsPlugin extends Plugin {
                     createdAt: existingHighlight.createdAt || Date.now(),
                     // Store the type for proper identification
                     type: isCustomPattern ? 'custom' : type,
-                    // Store full match for custom patterns
-                    fullMatch: isCustomPattern ? match[0] : undefined
+                    fullMatch: storedFullMatch(match, type, isCustomPattern)
                 });
             } else {
                 // For new highlights, use file modification time to preserve historical context
@@ -2608,8 +3134,7 @@ export default class HighlightCommentsPlugin extends Plugin {
                     color: type === 'html' ? color : undefined,
                     // Store the type for proper identification
                     type: isCustomPattern ? 'custom' : type,
-                    // Store full match for custom patterns
-                    fullMatch: isCustomPattern ? match[0] : undefined
+                    fullMatch: storedFullMatch(match, type, isCustomPattern)
                 });
             }
         });
@@ -2623,8 +3148,35 @@ export default class HighlightCommentsPlugin extends Plugin {
             if (shouldRefresh) {
                 void this.saveSettings(); // Save to disk after detecting changes
                 this.smartUpdateSidebar(existingHighlightsForFile, newHighlights);
+                // The comparison above covers footnote contents too, so this is
+                // the one place that knows a note's highlights *or* its comments
+                // just changed — which is exactly when a mindmap goes stale.
+                this.queueMindmapAutoSync(file);
             }
         }
+    }
+
+    /**
+     * Refresh this note's mindmap after its highlights or comments change, if
+     * the user asked for that and a map exists.
+     *
+     * Debounced, because a rescan runs on every keystroke-ish edit and rewriting
+     * a drawing on each one would fight the editor. The timer is per note, so
+     * editing two notes does not make one cancel the other.
+     */
+    private queueMindmapAutoSync(file: TFile): void {
+        if (!this.settings.excalidrawAutoSync) return;
+        // A mindmap is itself a file we scan; syncing on its own change would loop.
+        if (file.path.endsWith(EXCALIDRAW_EXTENSION)) return;
+
+        const pending = this.mindmapSyncTimers.get(file.path);
+        if (pending) window.clearTimeout(pending);
+
+        this.mindmapSyncTimers.set(file.path, window.setTimeout(() => {
+            this.mindmapSyncTimers.delete(file.path);
+            const mindmap = this.findMindmapForNote(file);
+            if (mindmap) void this.syncExcalidrawMindmap(mindmap, { quiet: true });
+        }, MINDMAP_AUTO_SYNC_DELAY));
     }
 
     /**
@@ -4028,6 +4580,54 @@ class HighlightSettingTab extends PluginSettingTab {
                         modal.open();
                     });
             });
+
+        // ========== EXPORT SETTINGS ==========
+
+        new Setting(containerEl).setHeading().setName(t('settings.export.heading'));
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawFolder.name'))
+            .setDesc(t('settings.export.excalidrawFolder.desc'))
+            .addText(text => {
+                text
+                    .setPlaceholder(t('settings.export.excalidrawFolder.placeholder'))
+                    .setValue(this.plugin.settings.excalidrawExportFolder)
+                    .onChange(async (value) => {
+                        this.plugin.settings.excalidrawExportFolder = value.trim();
+                        await this.plugin.saveSettings();
+                    });
+                new FileFolderSuggest(this.app, text.inputEl);
+            });
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawComments.name'))
+            .setDesc(t('settings.export.excalidrawComments.desc'))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.excalidrawIncludeComments)
+                .onChange(async (value) => {
+                    this.plugin.settings.excalidrawIncludeComments = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawAutoSync.name'))
+            .setDesc(t('settings.export.excalidrawAutoSync.desc'))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.excalidrawAutoSync)
+                .onChange(async (value) => {
+                    this.plugin.settings.excalidrawAutoSync = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawOpenBeside.name'))
+            .setDesc(t('settings.export.excalidrawOpenBeside.desc'))
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.excalidrawOpenBeside)
+                .onChange(async (value) => {
+                    this.plugin.settings.excalidrawOpenBeside = value;
+                    await this.plugin.saveSettings();
+                }));
 
         // ========== TASKS TAB SETTINGS ==========
 

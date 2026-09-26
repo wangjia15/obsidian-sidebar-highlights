@@ -1,13 +1,18 @@
-import { Menu, Notice, TFile } from 'obsidian';
+import { Editor, MarkdownView, Menu, Notice, TFile } from 'obsidian';
 import type HighlightCommentsPlugin from '../../main';
 import type { Highlight } from '../../main';
 import { t } from '../i18n';
 import { describeAiError, logSafe } from '../ai/ai-service';
 import { enabledPrompts } from '../ai/prompt-library';
 import { preparePromptRun, type PreparedRun } from '../ai/prompt-runner';
-import { canUseInlineFootnote, formatForFootnote, writeCommentForHighlight } from '../ai/comment-writer';
+import {
+    canUseInlineFootnote,
+    commentEditsForHighlight,
+    formatForFootnote,
+    writeCommentForHighlight
+} from '../ai/comment-writer';
 import { AiConfirmSendModal } from '../modals/ai-confirm-send-modal';
-import { AiResultModal } from '../modals/ai-result-modal';
+import { openAiResultView } from './ai-result-view';
 import type { PromptPreset } from '../ai/types';
 import { runBatch, summarize, type BatchItem } from '../ai/batch-runner';
 
@@ -20,7 +25,12 @@ export function aiAvailable(plugin: HighlightCommentsPlugin): boolean {
 }
 
 /** Adds one item per enabled prompt to an existing menu. */
-export function addAiMenuItems(menu: Menu, plugin: HighlightCommentsPlugin, highlight: Highlight): void {
+export function addAiMenuItems(
+    menu: Menu,
+    plugin: HighlightCommentsPlugin,
+    highlight: Highlight,
+    options: RunOptions = {}
+): void {
     const prompts = enabledPrompts(plugin.settings.ai.prompts);
     if (prompts.length === 0) return;
 
@@ -28,9 +38,19 @@ export function addAiMenuItems(menu: Menu, plugin: HighlightCommentsPlugin, high
         menu.addItem(item => {
             item.setTitle(prompt.name)
                 .setIcon(prompt.icon ?? 'sparkles')
-                .onClick(() => { void runPromptOnHighlight(plugin, prompt, highlight); });
+                .onClick(() => { void runPromptOnHighlight(plugin, prompt, highlight, options); });
         });
     }
+}
+
+export interface RunOptions {
+    /**
+     * Write the answer straight into a comment, whatever the prompt's own output
+     * target says. The right-click menu in the editor uses this: the user asked
+     * for a comment by picking the prompt there, and a preview modal over the
+     * text they are reading is in the way rather than in the flow.
+     */
+    forceComment?: boolean;
 }
 
 /** The standalone menu behind the card's AI button. */
@@ -47,8 +67,11 @@ export function showAiMenu(plugin: HighlightCommentsPlugin, highlight: Highlight
 export async function runPromptOnHighlight(
     plugin: HighlightCommentsPlugin,
     prompt: PromptPreset,
-    highlight: Highlight
+    highlight: Highlight,
+    options: RunOptions = {}
 ): Promise<void> {
+    // Capture the target before asynchronous work or sidebar selection changes.
+    highlight = { ...highlight };
     const problem = plugin.aiService.checkReadiness();
     if (problem) {
         new Notice(t(problem.reasonKey));
@@ -64,13 +87,25 @@ export async function runPromptOnHighlight(
     }
 
     const proceed = () => {
-        if (prompt.outputTarget === 'comment') {
+        if (options.forceComment || prompt.outputTarget === 'comment') {
             void runDirectToComment(plugin, prompt, highlight, prepared);
             return;
         }
-        new AiResultModal(plugin.app, plugin, prompt, highlight, prepared, {
-            onInsert: text => insertAiComment(plugin, highlight, text)
-        }).open();
+        void openAiResultView(plugin, {
+            prompt,
+            source: {
+                sourcePath: highlight.filePath,
+                prepare: profile => preparePromptRun(plugin, prompt, highlight, { profile })
+            },
+            prepared,
+            actions: {
+                // A preview prompt is one the user said should not write
+                // anything, so it gets no button that would.
+                onInsert: prompt.outputTarget === 'preview'
+                    ? undefined
+                    : text => insertAiComment(plugin, highlight, text)
+            }
+        });
     };
 
     if (!plugin.settings.ai.confirmBeforeSend) {
@@ -89,9 +124,18 @@ export async function runPromptOnHighlight(
     }).open();
 }
 
+/** How much of a streaming answer the progress notice shows at once. */
+const PROGRESS_TAIL = 140;
+
 /**
  * The no-preview path, for prompts the user has set to go straight to a
  * comment. Still reports what happened rather than writing silently.
+ *
+ * Streams rather than waiting for the whole answer. Nothing arrives in the note
+ * any sooner, but the wait stops being a blank one: the notice shows the text as
+ * it is written, which is the difference between "slow" and "working". Streaming
+ * that cannot be established — mobile, or the setting turned off — falls back to
+ * a single request inside `stream`, so this path needs no branch of its own.
  */
 async function runDirectToComment(
     plugin: HighlightCommentsPlugin,
@@ -99,9 +143,49 @@ async function runDirectToComment(
     highlight: Highlight,
     prepared: PreparedRun
 ): Promise<void> {
-    const notice = new Notice(t('ai.run.working', { name: prompt.name }), 0);
+    const controller = new AbortController();
+    const notice = new Notice('', 0);
+    notice.messageEl.createDiv({ text: t('ai.run.working', { name: prompt.name }) });
+    const progressEl = notice.messageEl.createDiv({ cls: 'sh-ai-run-progress' });
+
+    // A run with no UI of its own has nowhere else to put a stop control, and a
+    // long answer the user no longer wants should not have to be waited out.
+    const stop = notice.messageEl.createEl('button', { cls: 'sh-ai-batch-stop', text: t('ai.batch.stop') });
+    stop.addEventListener('click', () => {
+        controller.abort();
+        stop.disabled = true;
+    });
+
+    let streamed = '';
+    let thinking = '';
     try {
-        const answer = await plugin.aiService.complete(prepared.messages, { profile: prepared.profile });
+        const answer = await plugin.aiService.stream(prepared.messages, {
+            profile: prepared.profile,
+            signal: controller.signal,
+            // Running this again is a request for another answer, not for the
+            // last one back: this path writes straight into the note, so a
+            // cached reply would arrive as a duplicate of the comment already
+            // there. The preview modal keeps the cache — reopening a panel is
+            // the case it exists for.
+            bypassCache: true,
+            onDelta: chunk => {
+                streamed += chunk;
+                progressEl.setText(tail(streamed, PROGRESS_TAIL));
+            },
+            // A reasoning model says nothing for a while first; showing the
+            // thinking is what keeps the notice from looking stuck.
+            onReasoning: chunk => {
+                if (streamed) return;
+                thinking += chunk;
+                progressEl.setText(tail(thinking, PROGRESS_TAIL));
+            },
+            onFallback: () => {
+                // The partial text belongs to an attempt being redone.
+                streamed = '';
+                thinking = '';
+                progressEl.setText('');
+            }
+        });
         plugin.recordAiUsage(answer);
         notice.hide();
         await insertAiComment(plugin, highlight, answer.text);
@@ -111,13 +195,64 @@ async function runDirectToComment(
     }
 }
 
+/** The last `limit` characters, so a growing answer does not grow the notice. */
+function tail(text: string, limit: number): string {
+    const flat = text.replace(/\s+/g, ' ');
+    return flat.length > limit ? `…${flat.slice(-limit)}` : flat;
+}
+
+/**
+ * The editor showing a note, if one is open anywhere in the workspace —
+ * including a popout window or a side panel.
+ *
+ * Resolved by path rather than from the active leaf: the AI menus are reached
+ * from the sidebar and from a context menu, so by the time the answer arrives
+ * the active leaf is rarely the note being written to.
+ */
+function openEditorFor(plugin: HighlightCommentsPlugin, filePath: string): Editor | null {
+    for (const leaf of plugin.app.workspace.getLeavesOfType('markdown')) {
+        const view = leaf.view;
+        if (view instanceof MarkdownView && view.file?.path === filePath && view.getMode() === 'source' && view.editor) {
+            return view.editor;
+        }
+    }
+    return null;
+}
+
+/**
+ * Adds the comment through an open editor. Returns false when the highlight
+ * cannot be found in the buffer.
+ */
+function writeCommentThroughEditor(
+    editor: Editor,
+    highlight: Highlight,
+    commentText: string,
+    preferInline: boolean
+): boolean {
+    const edits = commentEditsForHighlight(editor.getValue(), highlight, commentText, preferInline);
+    if (!edits) return false;
+
+    // In order and in pre-edit offsets, which commentEditsForHighlight
+    // guarantees is safe; see its comment.
+    for (const edit of edits) {
+        editor.replaceRange(edit.text, editor.offsetToPos(edit.from), editor.offsetToPos(edit.to));
+    }
+    return true;
+}
+
 /**
  * Writes the answer into the note as a footnote.
  *
- * Goes through the vault rather than the editor so a highlight in a note that
- * is not currently open can still be commented on — the All notes and
- * Collections tabs both list those. `process` is the atomic read-modify-write,
- * so a concurrent edit cannot be clobbered by a stale copy.
+ * Through the open editor when there is one, and through the vault otherwise so
+ * that a highlight in a note that is not open can still be commented on — the
+ * All notes and Collections tabs both list those.
+ *
+ * The editor comes first because its buffer is up to two seconds ahead of the
+ * file: a highlight created from the editor's own context menu exists only in
+ * the buffer at the moment the AI menu above it is used, so a vault write would
+ * fail to find it and would discard whatever else had been typed since the last
+ * flush. Where no editor is open, `process` is the atomic read-modify-write, so
+ * a concurrent change cannot be clobbered by a stale copy either.
  */
 export async function insertAiComment(
     plugin: HighlightCommentsPlugin,
@@ -151,19 +286,24 @@ export async function insertAiComment(
 
     let located = true;
     try {
-        await plugin.app.vault.process(file, content => {
-            const written = writeCommentForHighlight(
-                content,
-                highlight,
-                commentText,
-                preferInline
-            );
-            if (!written) {
-                located = false;
-                return content;
-            }
-            return written.content;
-        });
+        const editor = openEditorFor(plugin, highlight.filePath);
+        if (editor) {
+            located = writeCommentThroughEditor(editor, highlight, commentText, preferInline);
+        } else {
+            await plugin.app.vault.process(file, content => {
+                const written = writeCommentForHighlight(
+                    content,
+                    highlight,
+                    commentText,
+                    preferInline
+                );
+                if (!written) {
+                    located = false;
+                    return content;
+                }
+                return written.content;
+            });
+        }
     } catch (error) {
         console.error('Sidebar Highlights: failed to write an AI comment:', logSafe(error));
         report(t('ai.run.writeFailed'));
@@ -238,7 +378,13 @@ export async function runPromptOnHighlights(
             const prepared = await preparePromptRun(plugin, prompt, highlight);
             const answer = await plugin.aiService.complete(prepared.messages, {
                 profile: prepared.profile,
-                signal
+                signal,
+                // Writes into the note, so the same reasoning as the single
+                // direct-to-comment run: re-running a batch must produce new
+                // answers, not a second copy of the last ones. Two highlights
+                // with identical text still each get their own request, which
+                // is the price of never writing a stale answer.
+                bypassCache: true
             });
             plugin.recordAiUsage(answer);
 

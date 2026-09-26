@@ -102,8 +102,32 @@ export class AiError extends Error {
     }
 }
 
-/** Where a preset's output is allowed to go. */
-export type PromptOutputTarget = 'preview' | 'comment' | 'both';
+/**
+ * What a prompt runs on.
+ *
+ * `highlight` prompts act on one highlight (or on each in turn, for a batch)
+ * and are reached from a card, the editor's context menu and the palette.
+ * `note` prompts act on the whole document and are reached from the sidebar
+ * toolbar. The scope decides which variables resolve and which output targets
+ * make sense, so it is one field rather than an inference from the template.
+ */
+export type PromptScope = 'highlight' | 'note';
+
+/**
+ * Where a preset's output is allowed to go.
+ *
+ * `preview`, `comment` and `both` belong to highlight prompts. Note prompts can
+ * write back, mark passages, or create a Markdown/HTML document. The prompt
+ * editor only offers the targets its scope can use.
+ */
+export type PromptOutputTarget =
+    | 'preview'
+    | 'comment'
+    | 'both'
+    | 'append'
+    | 'highlights'
+    | 'new-markdown'
+    | 'new-html';
 
 /** A prompt as the rest of the plugin sees it: every field resolved. */
 export interface PromptPreset {
@@ -116,6 +140,7 @@ export interface PromptPreset {
     template: string;
     /** Builtin presets cannot be deleted, only disabled or overridden. */
     builtin: boolean;
+    scope: PromptScope;
     outputTarget: PromptOutputTarget;
     enabled: boolean;
     sortOrder: number;
@@ -138,6 +163,7 @@ export interface StoredPrompt {
     icon?: string;
     system?: string;
     template?: string;
+    scope?: PromptScope;
     outputTarget?: PromptOutputTarget;
     enabled?: boolean;
     sortOrder?: number;
@@ -153,6 +179,16 @@ export interface AiSettings {
     defaultTargetLanguage: string;
     /** Upper bound on note text injected as context. */
     contextCharLimit: number;
+    /**
+     * Upper bound on the note text a whole-note prompt sends.
+     *
+     * Separate from `contextCharLimit`, and much larger, because the two answer
+     * different questions: that one is "how much surrounding context may a
+     * highlight prompt borrow", this one is "how much of the document may the
+     * document prompt see". Summarising a note from its first 4,000 characters
+     * would be summarising its opening.
+     */
+    noteCharLimit: number;
     /** Default false: send only the highlight itself, not the whole note. */
     includeNoteContext: boolean;
     includeExistingComments: boolean;
@@ -161,6 +197,15 @@ export interface AiSettings {
     /** Desktop only; falls back to a non-streaming retry when fetch fails. */
     streaming: boolean;
     requestTimeoutMs: number;
+    /**
+     * Colour written into the note for a highlight the model picked out, as a
+     * hex value. Empty writes plain `==text==`, like any other highlight.
+     *
+     * Worth having its own colour: a passage a model chose and one the reader
+     * chose are not the same claim, and the sidebar's colour filter is then
+     * enough to tell them apart.
+     */
+    extractedHighlightColor: string;
     /** Rich (block-level) rendering of comments, including mermaid. */
     renderRichContent: boolean;
     renderMermaid: boolean;
@@ -218,11 +263,20 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
     prompts: [],
     defaultTargetLanguage: '',
     contextCharLimit: 4000,
+    // Enough for a long note in one request without being a bill by accident;
+    // longer notes are split into requests at natural document boundaries.
+    noteCharLimit: 24000,
     includeNoteContext: false,
     includeExistingComments: false,
     confirmBeforeSend: true,
-    streaming: false,
+    // On, because the fallback makes it safe to be: a stream that cannot be
+    // established becomes one ordinary request. Off, every answer arrives as a
+    // single blob after a silent wait, which reads as the plugin being slow.
+    streaming: true,
     requestTimeoutMs: 60000,
+    // Plain `==text==`, the same as a highlight made by hand. Opting into a
+    // colour is a decision about the note's own markup, so it is the user's.
+    extractedHighlightColor: '',
     renderRichContent: true,
     renderMermaid: true,
     maxDiagramHeight: 320,

@@ -9,13 +9,24 @@ import type { PreparedRun } from '../ai/prompt-runner';
  * generic "this uses AI" warning, so the user is agreeing to something
  * concrete. Nothing has been sent when this opens.
  */
+export interface AiConfirmSendOptions {
+    /**
+     * Set when the run is being confirmed despite the per-send confirmation
+     * being off — a large enough run is its own decision. The modal then says
+     * why it is asking and drops the "don't ask again" toggle, which is already
+     * off and could not honour a second press of it.
+     */
+    forced?: boolean;
+}
+
 export class AiConfirmSendModal extends Modal {
     private dontAskAgain = false;
 
     constructor(
         app: App,
         private readonly run: PreparedRun,
-        private readonly onConfirm: (dontAskAgain: boolean) => void
+        private readonly onConfirm: (dontAskAgain: boolean) => void,
+        private readonly options: AiConfirmSendOptions = {}
     ) {
         super(app);
     }
@@ -38,12 +49,25 @@ export class AiConfirmSendModal extends Modal {
             t('modals.aiConfirm.payload'),
             t('modals.aiConfirm.payloadValue', { chars: this.run.payloadChars })
         );
+        // Only worth a row when it is more than the one request every send is.
+        const requests = this.run.messageBatches?.length ?? 1;
+        if (requests > 1) {
+            this.addFact(
+                facts,
+                t('modals.aiConfirm.requests'),
+                t('modals.aiConfirm.requestsValue', { count: requests })
+            );
+        }
 
-        new Setting(contentEl)
-            .setName(t('modals.aiConfirm.dontAsk'))
-            .addToggle(toggle => toggle
-                .setValue(false)
-                .onChange(value => { this.dontAskAgain = value; }));
+        if (this.options.forced) {
+            contentEl.createDiv({ cls: 'sh-ai-confirm-lead', text: t('modals.aiConfirm.manyRequests') });
+        } else {
+            new Setting(contentEl)
+                .setName(t('modals.aiConfirm.dontAsk'))
+                .addToggle(toggle => toggle
+                    .setValue(false)
+                    .onChange(value => { this.dontAskAgain = value; }));
+        }
 
         const buttons = contentEl.createDiv({ cls: 'modal-button-container' });
         const cancel = buttons.createEl('button', { text: t('modals.aiConfirm.cancel') });

@@ -35,6 +35,10 @@ export function renderAiSettings(sectionEl: HTMLElement, plugin: HighlightCommen
         // place they change. Re-registering here keeps a renamed or deleted
         // prompt from lingering in the palette under its old name.
         plugin.registerAiPromptCommands();
+        // They also decide whether the toolbar's whole-note AI button exists:
+        // enabling AI, or adding the first note-scoped prompt, should make it
+        // appear without the user having to reopen the sidebar.
+        plugin.refreshSidebar();
     };
     render();
 }
@@ -236,6 +240,8 @@ function renderContextSettings(containerEl: HTMLElement, plugin: HighlightCommen
                 });
         });
 
+    renderNoteSettings(containerEl, plugin);
+
     new Setting(containerEl)
         .setName(t('settings.ai.context.targetLanguage.name'))
         .setDesc(t('settings.ai.context.targetLanguage.desc'))
@@ -258,6 +264,58 @@ function renderContextSettings(containerEl: HTMLElement, plugin: HighlightCommen
             }));
 }
 
+/**
+ * The whole-note block: how much of a document goes out, and what colour a
+ * highlight the model picked out is written in.
+ */
+function renderNoteSettings(containerEl: HTMLElement, plugin: HighlightCommentsPlugin): void {
+    const ai = plugin.settings.ai;
+
+    new Setting(containerEl)
+        .setName(t('settings.ai.note.charLimit.name'))
+        .setDesc(t('settings.ai.note.charLimit.desc'))
+        .addText(text => {
+            text.inputEl.type = 'number';
+            text.inputEl.min = '500';
+            text.setValue(String(ai.noteCharLimit))
+                .onChange(async value => {
+                    const parsed = Number(value);
+                    if (!Number.isFinite(parsed) || parsed < 500) return;
+                    ai.noteCharLimit = Math.round(parsed);
+                    await plugin.saveSettings();
+                });
+        });
+
+    const colorSetting = new Setting(containerEl)
+        .setName(t('settings.ai.note.extractColor.name'))
+        .setDesc(t('settings.ai.note.extractColor.desc'));
+
+    colorSetting.addColorPicker(picker => picker
+        // The picker has no "unset", so it shows the plugin's own default while
+        // the real value is empty; the clear button below is what unsets it.
+        .setValue(ai.extractedHighlightColor || plugin.settings.highlightColor)
+        .onChange(async value => {
+            ai.extractedHighlightColor = value;
+            await plugin.saveSettings();
+        }));
+
+    colorSetting.addExtraButton(button => button
+        .setIcon('rotate-ccw')
+        .setTooltip(t('settings.ai.note.extractColor.clear'))
+        .onClick(async () => {
+            ai.extractedHighlightColor = '';
+            await plugin.saveSettings();
+            new Notice(t('settings.ai.note.extractColor.cleared'));
+        }));
+
+    if (!ai.extractedHighlightColor) {
+        colorSetting.descEl.createDiv({
+            cls: 'setting-item-description',
+            text: t('settings.ai.note.extractColor.plain')
+        });
+    }
+}
+
 function renderPromptSettings(containerEl: HTMLElement, plugin: HighlightCommentsPlugin, refresh: () => void): void {
     const ai = plugin.settings.ai;
 
@@ -273,10 +331,16 @@ function renderPromptSettings(containerEl: HTMLElement, plugin: HighlightComment
             setting.nameEl.prepend(icon);
         }
 
-        const badges: string[] = [];
+        // The scope is always shown: which menu a prompt appears in is the
+        // first thing to know about it, and two prompts named "Summarize" that
+        // differ only in scope are otherwise indistinguishable here.
+        const badges: string[] = [
+            t(`settings.ai.prompts.scope.${prompt.scope}`),
+            t(`modals.aiPrompt.output.${prompt.outputTarget}`)
+        ];
         if (prompt.builtin && hasUserChanges(ai.prompts, prompt.id)) badges.push(t('settings.ai.prompts.edited'));
         if (!prompt.enabled) badges.push(t('settings.ai.prompts.disabled'));
-        if (badges.length > 0) setting.setDesc(badges.join(' · '));
+        setting.setDesc(badges.join(' · '));
 
         setting.addToggle(toggle => toggle
             .setValue(prompt.enabled)
@@ -331,6 +395,7 @@ function renderPromptSettings(containerEl: HTMLElement, plugin: HighlightComment
                 name: '',
                 template: '{{selection}}',
                 builtin: false,
+                scope: 'highlight',
                 outputTarget: 'both',
                 enabled: true,
                 sortOrder: resolvePrompts(ai.prompts).length

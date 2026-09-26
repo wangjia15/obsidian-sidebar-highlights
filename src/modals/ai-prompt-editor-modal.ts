@@ -1,9 +1,24 @@
 import { App, Modal, Notice, Setting, setIcon } from 'obsidian';
 import { t } from '../i18n';
-import { PROMPT_VARIABLES, isBuiltinPromptId, parseStoredPrompts, unknownVariables, variablesUsed, type PromptVariableName } from '../ai/prompt-library';
-import type { AiSettings, PromptOutputTarget, PromptPreset, StoredPrompt } from '../ai/types';
+import {
+    isBuiltinPromptId,
+    outOfScopeVariables,
+    outputTargetsFor,
+    parseStoredPrompts,
+    primaryVariable,
+    unknownVariables,
+    variablesForScope,
+    variablesUsed,
+    type PromptVariableName
+} from '../ai/prompt-library';
+import type { AiSettings, PromptOutputTarget, PromptPreset, PromptScope, StoredPrompt } from '../ai/types';
 
-/** Variables that resolve to nothing unless the matching setting is on. */
+/**
+ * Variables that resolve to nothing unless the matching setting is on.
+ *
+ * `note` is listed for the highlight scope only: a whole-note prompt sends the
+ * document by definition, so there is no gate on it there.
+ */
 const GATED_VARIABLES: Partial<Record<PromptVariableName, keyof AiSettings>> = {
     note: 'includeNoteContext',
     context: 'includeNoteContext',
@@ -24,12 +39,16 @@ export class AiPromptEditorModal extends Modal {
         icon: string;
         system: string;
         template: string;
+        scope: PromptScope;
         outputTarget: PromptOutputTarget;
         enabled: boolean;
     };
 
     private templateInput: HTMLTextAreaElement | null = null;
     private warningsEl: HTMLElement | null = null;
+    /** Re-rendered when the scope changes, since both depend on it. */
+    private paletteEl: HTMLElement | null = null;
+    private outputDropdown: HTMLSelectElement | null = null;
 
     constructor(
         app: App,
@@ -43,6 +62,7 @@ export class AiPromptEditorModal extends Modal {
             icon: prompt.icon ?? '',
             system: prompt.system ?? '',
             template: prompt.template,
+            scope: prompt.scope,
             outputTarget: prompt.outputTarget,
             enabled: prompt.enabled
         };
@@ -69,6 +89,21 @@ export class AiPromptEditorModal extends Modal {
                 .setPlaceholder(t('modals.aiPrompt.namePlaceholder'))
                 .setValue(this.draft.name)
                 .onChange(value => { this.draft.name = value; }));
+
+        // First, because it decides what the rest of the form means: which
+        // variables the template can fill and where the answer may go.
+        new Setting(contentEl)
+            .setName(t('modals.aiPrompt.scopeLabel'))
+            .setDesc(t('modals.aiPrompt.scopeDesc'))
+            .addDropdown(dropdown => {
+                dropdown.addOption('highlight', t('modals.aiPrompt.scopeHighlight'));
+                dropdown.addOption('note', t('modals.aiPrompt.scopeNote'));
+                dropdown.setValue(this.draft.scope);
+                dropdown.onChange(value => {
+                    this.draft.scope = value as PromptScope;
+                    this.onScopeChanged();
+                });
+            });
 
         new Setting(contentEl)
             .setName(t('modals.aiPrompt.iconLabel'))
@@ -102,17 +137,17 @@ export class AiPromptEditorModal extends Modal {
                     });
             });
 
-        this.renderVariablePalette(contentEl);
+        this.paletteEl = contentEl.createDiv();
+        this.renderVariablePalette();
         this.warningsEl = contentEl.createDiv({ cls: 'sh-ai-prompt-warnings' });
         this.renderWarnings();
 
         new Setting(contentEl)
             .setName(t('modals.aiPrompt.outputLabel'))
+            .setDesc(t('modals.aiPrompt.outputDesc'))
             .addDropdown(dropdown => {
-                dropdown.addOption('both', t('modals.aiPrompt.outputBoth'));
-                dropdown.addOption('preview', t('modals.aiPrompt.outputPreview'));
-                dropdown.addOption('comment', t('modals.aiPrompt.outputComment'));
-                dropdown.setValue(this.draft.outputTarget);
+                this.outputDropdown = dropdown.selectEl;
+                this.renderOutputOptions();
                 dropdown.onChange(value => { this.draft.outputTarget = value as PromptOutputTarget; });
             });
 
@@ -130,17 +165,34 @@ export class AiPromptEditorModal extends Modal {
         save.addEventListener('click', () => { void this.submit(); });
     }
 
+    /** Both depend on the scope, so switching it rebuilds them together. */
+    private onScopeChanged(): void {
+        this.renderVariablePalette();
+        this.renderOutputOptions();
+        this.renderWarnings();
+    }
+
     /**
      * Clickable chips rather than a static list: the whole point is to get the
      * exact spelling into the template without the user retyping it.
+     *
+     * Only the ones this scope can fill are offered — a whole-note prompt is
+     * not helped by being handed `{{selection}}`.
      */
-    private renderVariablePalette(containerEl: HTMLElement): void {
-        const palette = containerEl.createDiv({ cls: 'sh-ai-variable-palette' });
+    private renderVariablePalette(): void {
+        const container = this.paletteEl;
+        if (!container) return;
+        container.empty();
+
+        const palette = container.createDiv({ cls: 'sh-ai-variable-palette' });
         palette.createDiv({ cls: 'sh-ai-variable-label', text: t('modals.aiPrompt.variables') });
         const chips = palette.createDiv({ cls: 'sh-ai-variable-chips' });
 
-        for (const name of PROMPT_VARIABLES) {
-            const gate = GATED_VARIABLES[name];
+        for (const name of variablesForScope(this.draft.scope)) {
+            // A note prompt sends the note whatever the context setting says,
+            // so the gate that greys `{{note}}` out only applies to the other
+            // scope. See buildNoteVariables.
+            const gate = this.draft.scope === 'note' ? undefined : GATED_VARIABLES[name];
             const gated = gate !== undefined && this.settings[gate] === false;
 
             const chip = chips.createEl('button', {
@@ -151,6 +203,26 @@ export class AiPromptEditorModal extends Modal {
             if (gated) chip.title = t('modals.aiPrompt.variableGated');
             chip.addEventListener('click', () => this.insertVariable(name));
         }
+    }
+
+    /**
+     * The targets this scope can use. Keeps the draft's own target valid, since
+     * switching scope can strand it on one the new scope cannot dispatch.
+     */
+    private renderOutputOptions(): void {
+        const select = this.outputDropdown;
+        if (!select) return;
+        select.empty();
+
+        const targets = outputTargetsFor(this.draft.scope);
+        for (const target of targets) {
+            select.createEl('option', { value: target, text: t(`modals.aiPrompt.output.${target}`) });
+        }
+
+        if (!targets.includes(this.draft.outputTarget)) {
+            this.draft.outputTarget = targets[0];
+        }
+        select.value = this.draft.outputTarget;
     }
 
     /** Inserts at the caret, replacing any selection, and keeps focus in the field. */
@@ -176,19 +248,33 @@ export class AiPromptEditorModal extends Modal {
         if (!target) return;
         target.empty();
 
+        const names = (list: string[]) => list.map(name => `{{${name}}}`).join(', ');
+
         const unknown = unknownVariables(this.draft.template);
         if (unknown.length > 0) {
             target.createDiv({
                 cls: 'sh-ai-prompt-warning',
-                text: t('modals.aiPrompt.unknownVariable', { names: unknown.map(name => `{{${name}}}`).join(', ') })
+                text: t('modals.aiPrompt.unknownVariable', { names: names(unknown) })
             });
         }
 
-        if (this.draft.template.trim() && !variablesUsed(this.draft.template).includes('selection')) {
+        // Spelled right but reaching for something this scope has not got —
+        // `{{selection}}` in a whole-note prompt, most often, which would
+        // resolve to nothing without any error at all.
+        const outOfScope = outOfScopeVariables(this.draft.template, this.draft.scope);
+        if (outOfScope.length > 0) {
+            target.createDiv({
+                cls: 'sh-ai-prompt-warning',
+                text: t('modals.aiPrompt.outOfScopeVariable', { names: names(outOfScope) })
+            });
+        }
+
+        const primary = primaryVariable(this.draft.scope);
+        if (this.draft.template.trim() && !variablesUsed(this.draft.template).includes(primary)) {
             const row = target.createDiv({ cls: 'sh-ai-prompt-warning is-hint' });
             const icon = row.createSpan({ cls: 'sh-ai-prompt-warning-icon' });
             setIcon(icon, 'info');
-            row.createSpan({ text: t('modals.aiPrompt.noSelection') });
+            row.createSpan({ text: t('modals.aiPrompt.noPrimaryVariable', { name: `{{${primary}}}` }) });
         }
     }
 
@@ -218,6 +304,7 @@ export class AiPromptEditorModal extends Modal {
                 icon: this.draft.icon || undefined,
                 system: this.draft.system.trim() || undefined,
                 template: this.draft.template,
+                scope: this.draft.scope,
                 outputTarget: this.draft.outputTarget,
                 enabled: this.draft.enabled,
                 sortOrder: this.prompt.sortOrder
@@ -228,6 +315,7 @@ export class AiPromptEditorModal extends Modal {
         if (changed('icon', this.prompt.icon ?? '')) patch.icon = this.draft.icon || undefined;
         if (changed('system', this.prompt.system ?? '')) patch.system = this.draft.system;
         if (changed('template', this.prompt.template)) patch.template = this.draft.template;
+        if (changed('scope', this.prompt.scope)) patch.scope = this.draft.scope;
         if (changed('outputTarget', this.prompt.outputTarget)) patch.outputTarget = this.draft.outputTarget;
         if (changed('enabled', this.prompt.enabled)) patch.enabled = this.draft.enabled;
 

@@ -5,7 +5,10 @@
     "goToCollection": "转到{{name}}",
     "applyDisplayMode": "应用显示模式：{{name}}",
     "runAiPrompt": "AI：{{name}}",
-    "runAiPromptOnNote": "AI：{name}（当前笔记全部高亮）"
+    "runAiPromptOnNote": "AI：{name}（当前笔记全部高亮）",
+    "exportExcalidraw": "将当前笔记的高亮导出为 Excalidraw 思维导图",
+    "syncExcalidraw": "刷新 Excalidraw 思维导图",
+    "runAiPromptOnDocument": "对整篇笔记运行：{{name}}"
   },
   "tabs": {
     "currentNote": "当前笔记",
@@ -125,7 +128,14 @@
       "heading": "颜色名称",
       "nameFor": "{{color}} 的名称",
       "desc": "可选：为此颜色添加自定义名称，以便在【按颜色分组】中使用，而不是显示十六进制代码。",
-      "placeholder": "例如：【重要】、【研究】"
+      "placeholder": "例如：【重要】、【研究】",
+      "slots": {
+        "yellow": "黄色",
+        "red": "红色",
+        "teal": "青色",
+        "blue": "蓝色",
+        "green": "绿色"
+      }
     },
     "comments": {
       "heading": "注释",
@@ -268,7 +278,11 @@
         "importButton": "导入",
         "imported": "已导入 {{count}} 条提示词修改",
         "importInvalid": "这不是有效的提示词列表。应为一个 JSON 数组，每项含 id 字段。",
-        "cancel": "取消"
+        "cancel": "取消",
+        "scope": {
+          "highlight": "高亮",
+          "note": "整篇笔记"
+        }
       },
       "rendering": {
         "heading": "评论渲染",
@@ -298,6 +312,19 @@
         "none": "本月尚无记录。",
         "reset": "清空统计",
         "resetDone": "用量统计已清空"
+      },
+      "note": {
+        "charLimit": {
+          "name": "整篇笔记单次请求字符数",
+          "desc": "较长笔记会优先按标题或段落拆分，并通过多次请求处理。数值越大，请求次数越少，但模型需要支持更大的上下文。"
+        },
+        "extractColor": {
+          "name": "摘录高亮的颜色",
+          "desc": "模型摘录出的段落写入笔记时使用的颜色，便于与你自己标的高亮区分，也可在侧边栏按颜色筛选。",
+          "clear": "不使用颜色",
+          "cleared": "摘录段落将写为普通的 ==文本==",
+          "plain": "未设置颜色：摘录段落写为普通的 ==文本==。"
+        }
       }
     },
     "detection": {
@@ -393,6 +420,26 @@
       "restoreFailed": "从备份恢复失败。请查看控制台了解详情。",
       "manualBackupCreated": "手动备份创建成功",
       "manualBackupSkipped": "已跳过备份 — 最近的备份内容完全相同。"
+    },
+    "export": {
+      "heading": "导出",
+      "excalidrawFolder": {
+        "name": "Excalidraw 思维导图文件夹",
+        "desc": "导出的思维导图的保存位置。留空则保存在高亮所属笔记的同一文件夹中。",
+        "placeholder": "与笔记相同的文件夹"
+      },
+      "excalidrawComments": {
+        "name": "在思维导图中包含评论",
+        "desc": "将每条评论绘制为其所属高亮的子节点。关闭后仅绘制高亮。"
+      },
+      "excalidrawAutoSync": {
+        "name": "自动刷新思维导图",
+        "desc": "笔记的高亮或评论发生变化时，自动重绘它的思维导图，仅对已有思维导图的笔记生效。刷新会整图重绘，图中手动调整或添加的内容会丢失。"
+      },
+      "excalidrawOpenBeside": {
+        "name": "在笔记旁边打开思维导图",
+        "desc": "在笔记右侧的分栏中打开思维导图，便于对照阅读。关闭则在新标签页中打开。"
+      }
     }
   },
   "ai": {
@@ -425,7 +472,10 @@
       "ask": "追问",
       "tags": "提取标签",
       "diagram": "生成图示",
-      "untitled": "未命名提示词"
+      "untitled": "未命名提示词",
+      "noteSummary": "总结全文",
+      "noteExtract": "摘录并标记",
+      "noteOutline": "生成大纲"
     },
     "run": {
       "working": "正在执行 {{name}}…",
@@ -444,6 +494,16 @@
       "stopped": "已停止，完成 {count} 条高亮。",
       "failures": "{count} 条失败：{names}",
       "writeFailed": "评论写入失败"
+    },
+    "note": {
+      "working": "正在对《{{note}}》运行 {{name}}…",
+      "chunked": "本文较长，将拆成 {{count}} 段处理，不会遗漏原文内容。",
+      "appended": "已写入笔记的「{{heading}}」小节",
+      "created": "已创建 {{path}}",
+      "marked": "已标记 {{marked}} 处",
+      "markedSome": "已标记 {{marked}} 处；{{missed}} 处未能在原文中逐字匹配，已跳过。",
+      "markedNone": "{{total}} 处摘录均未能在原文中逐字匹配，因此没有标记任何内容。模型做了转述而非原文摘录——请重试，或要求它严格照抄原文。",
+      "noPassages": "模型没有返回可标记的内容。"
     }
   },
   "sidebar": {
@@ -471,7 +531,11 @@
     "backToCollections": "返回合集",
     "newCollection": "新建合集",
     "closeSearch": "关闭搜索",
-    "includeSubfolders": "包含子文件夹中的笔记"
+    "includeSubfolders": "包含子文件夹中的笔记",
+    "exportExcalidraw": "将可见高亮导出为 Excalidraw 思维导图（{{count}}）",
+    "syncExcalidraw": "刷新 Excalidraw 思维导图（{{count}}）",
+    "syncExcalidrawButton": "刷新 Excalidraw 思维导图",
+    "noteAi": "对本篇笔记使用 AI"
   },
   "actions": {
     "moveToCollection": "移动到...",
@@ -552,7 +616,11 @@
     "markBelowRead": "将下方标记为已读",
     "removeHighlight": "移除高亮",
     "removeComments": "移除评论",
-    "removeHighlightAndComments": "移除高亮和评论"
+    "removeHighlightAndComments": "移除高亮和评论",
+    "createHighlight": "创建高亮",
+    "createHighlightWithColor": "创建高亮（{{color}}）",
+    "defaultColor": "默认颜色",
+    "aiComment": "用 AI 为此高亮添加评论"
   },
   "filterMenu": {
     "clear": "清除",
@@ -703,15 +771,27 @@
       "variables": "变量",
       "variableGated": "需要开启对应设置",
       "unknownVariable": "不是可用变量：{{names}}。它将按原样发送。",
-      "noSelection": "模板中若从不引用 {{selection}}，就读不到高亮内容。",
       "outputLabel": "输出",
-      "outputPreview": "仅预览",
-      "outputComment": "插入为评论",
-      "outputBoth": "先预览，再决定",
       "enabledLabel": "在菜单中显示",
       "save": "保存",
       "cancel": "取消",
-      "emptyTemplate": "提示词必须有模板。"
+      "emptyTemplate": "提示词必须有模板。",
+      "scopeLabel": "作用范围",
+      "scopeDesc": "「单条高亮」出现在高亮卡片和编辑器右键菜单中；「整篇笔记」出现在侧边栏工具条，读取全文。",
+      "scopeHighlight": "单条高亮",
+      "scopeNote": "整篇笔记",
+      "outputDesc": "答案写到哪里。",
+      "outOfScopeVariable": "{{names}} 在此作用范围内不可用，会解析为空。",
+      "noPrimaryVariable": "模板中没有引用 {{name}}，模型看不到它应该处理的内容。",
+      "output": {
+        "preview": "仅预览",
+        "comment": "插入为评论",
+        "both": "先预览再决定",
+        "append": "写入笔记",
+        "new-markdown": "生成新的 Markdown 文档",
+        "new-html": "生成新的 HTML 文档",
+        "highlights": "标记摘录段落"
+      }
     },
     "aiConfirm": {
       "title": "发送给模型？",
@@ -722,6 +802,9 @@
       "model": "模型",
       "payload": "载荷",
       "payloadValue": "{{chars}} 个字符",
+      "requests": "请求次数",
+      "requestsValue": "{{count}} 次独立请求",
+      "manyRequests": "本文较长，会拆成多次请求发送，费用是单次的数倍，因此即使已关闭逐次确认也仍需确认一次。",
       "dontAsk": "此 vault 中不再询问",
       "cancel": "取消",
       "send": "发送"
@@ -739,7 +822,10 @@
       "close": "关闭",
       "followUpPlaceholder": "追加一句要求…",
       "followUpSend": "发送",
-      "unknownVariable": "该模板引用了 {{names}}，它不是可用变量，已按原样发送。"
+      "unknownVariable": "该模板引用了 {{names}}，它不是可用变量，已按原样发送。",
+      "createMarkdown": "创建 Markdown 文档",
+      "createHtml": "创建 HTML 文档",
+      "insertSection": "写入笔记"
     },
     "diagramZoom": {
       "zoomIn": "放大",
@@ -766,10 +852,22 @@
     "copyFailed": "复制到剪贴板失败",
     "highlightRemoved": "已移除高亮",
     "commentsRemoved": "已移除评论",
-    "highlightAndCommentsRemoved": "已移除高亮和评论"
+    "highlightAndCommentsRemoved": "已移除高亮和评论",
+    "commentNeedsEditor": "无法在编辑器中打开该笔记以添加评论。",
+    "excalidrawExported": "思维导图已创建：{{path}}",
+    "excalidrawNothingToExport": "没有可导出的高亮",
+    "excalidrawExportFailed": "无法创建 Excalidraw 文件：{{reason}}",
+    "excalidrawUpdated": "思维导图已刷新：{{path}}",
+    "excalidrawNotAMindmap": "该文件不是 Sidebar Highlights 导出的思维导图"
   },
   "render": {
     "diagramError": "图表无法渲染",
     "diagramZoom": "点击放大"
+  },
+  "views": {
+    "aiResult": {
+      "title": "AI 结果",
+      "gone": "工作区重新加载后此回答未被保留。重新运行提示词可再生成一份。"
+    }
   }
 }

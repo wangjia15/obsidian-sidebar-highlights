@@ -114,7 +114,7 @@ describe('AiService requests', () => {
         resetRequests();
     });
 
-    it('sends a deliberately tiny request when testing a connection', async () => {
+    it('sends a small request when testing a connection', async () => {
         respond(200, { model: 'gpt-4o-mini', choices: [{ message: { content: 'ok' } }] });
         const target = profile();
         const service = new AiService(() => settings({ profiles: [target], activeProfileId: target.id }));
@@ -122,8 +122,28 @@ describe('AiService requests', () => {
         const model = await service.testConnection(target);
 
         const body = JSON.parse(requestAt(0).body ?? '{}') as Record<string, unknown>;
-        expect(body.max_tokens).toBe(16);
+        // Small, but not so small that a reasoning model's preamble uses it up
+        // and leaves the message empty — that reads as a failed connection.
+        expect(body.max_tokens).toBe(512);
         expect(model).toBe('gpt-4o-mini');
+    });
+
+    it('does not mistake a reasoning model\'s thinking budget for a broken connection', async () => {
+        // What GLM-5.3 answers when max_tokens is spent before it speaks: 200,
+        // finish_reason "length", an empty message and the thought beside it.
+        respond(200, {
+            model: 'glm-5.3-flash',
+            choices: [{
+                finish_reason: 'length',
+                message: { role: 'assistant', content: '', reasoning_content: 'The user wants the word ok.' }
+            }]
+        });
+        const target = profile();
+        const service = new AiService(() => settings({ profiles: [target], activeProfileId: target.id }));
+
+        // Still a failure — an empty answer is one — but the budget above is
+        // what stops a working connection from producing this in the first place.
+        await expect(service.testConnection(target)).rejects.toBeInstanceOf(AiError);
     });
 
     it('refuses to list models for a provider that cannot', async () => {
@@ -223,5 +243,41 @@ describe('cloneAiSettings', () => {
         expect(DEFAULT_AI_SETTINGS.enabled).toBe(false);
         expect(DEFAULT_AI_SETTINGS.includeNoteContext).toBe(false);
         expect(DEFAULT_AI_SETTINGS.confirmBeforeSend).toBe(true);
+    });
+});
+
+
+describe('AI answer cache', () => {
+    it('reuses successful answers across complete and stream without charging usage twice', async () => {
+        const target = profile();
+        const service = new AiService(() => settings({ profiles: [target] }));
+        const provider = service.providerFor(target);
+        const complete = jest.spyOn(provider, 'complete').mockResolvedValue({ text: 'answer', usage: { completionTokens: 10 } });
+        const messages = [{ role: 'user' as const, content: 'question' }];
+        expect((await service.complete(messages)).usage?.completionTokens).toBe(10);
+        const onDelta = jest.fn();
+        expect(await service.stream(messages, { onDelta })).toEqual({ text: 'answer', usage: undefined });
+        expect(onDelta).toHaveBeenCalledWith('answer');
+        expect(complete).toHaveBeenCalledTimes(1);
+        await service.complete(messages, { bypassCache: true });
+        expect(complete).toHaveBeenCalledTimes(2);
+        target.model = 'another-model';
+        await service.complete(messages);
+        expect(complete).toHaveBeenCalledTimes(3);
+        await service.complete([{ role: 'user', content: 'different language or content' }]);
+        expect(complete).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not cache failures or return cached answers after cancellation', async () => {
+        const service = new AiService(() => settings({ profiles: [profile()] }));
+        const complete = jest.spyOn(service.providerFor(profile()), 'complete')
+            .mockRejectedValueOnce(new AiError('network', 'offline')).mockResolvedValue({ text: 'answer' });
+        const messages = [{ role: 'user' as const, content: 'question' }];
+        await expect(service.complete(messages)).rejects.toMatchObject({ kind: 'network' });
+        await service.complete(messages);
+        expect(complete).toHaveBeenCalledTimes(2);
+        const controller = new AbortController();
+        controller.abort();
+        await expect(service.complete(messages, { signal: controller.signal })).rejects.toMatchObject({ kind: 'aborted' });
     });
 });

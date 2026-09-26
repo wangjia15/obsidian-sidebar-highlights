@@ -7,17 +7,31 @@ import { GeminiProvider } from './providers/gemini';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible';
 import { redact, toAiError, type Provider } from './providers/provider';
 
+/**
+ * Output budget for the connection test: enough for a reasoning model's
+ * preamble as well as the one word being asked for. See testConnection.
+ */
+const TEST_CONNECTION_MAX_TOKENS = 512;
+
 export interface CompleteOptions {
     /** Defaults to the active profile. */
     profile?: AiProfile;
     signal?: AbortSignal;
     temperature?: number;
     maxTokens?: number;
+    /** Force a fresh answer for regenerate and connection tests. */
+    bypassCache?: boolean;
 }
 
 export interface StreamOptions extends CompleteOptions {
     /** Called with each piece of text as it arrives. */
     onDelta: (text: string) => void;
+    /**
+     * Called with a reasoning model's thinking while it is still thinking. It
+     * is not part of the answer — see StreamHandlers.onReasoning — but showing
+     * it is the difference between a slow request and an apparently dead one.
+     */
+    onReasoning?: (text: string) => void;
     /**
      * Called when a stream could not be started and the request is being retried
      * without streaming, so the caller can drop whatever partial text it drew.
@@ -36,6 +50,21 @@ export interface ReadinessProblem {
  * service always sees the live values without keeping a stale copy.
  */
 export class AiService {
+    private readonly cache = new Map<string, AiResult>();
+
+    private cacheKey(messages: AiMessage[], profile: AiProfile, options: CompleteOptions): string {
+        return JSON.stringify([profile, messages, options.temperature, options.maxTokens]);
+    }
+
+    private remember(key: string, result: AiResult): AiResult {
+        if (result.text.trim()) {
+            this.cache.delete(key);
+            this.cache.set(key, { ...result, usage: undefined });
+            while (this.cache.size > 50) this.cache.delete(this.cache.keys().next().value as string);
+        }
+        return result;
+    }
+
     private readonly providers: Record<ProviderKind, Provider>;
 
     constructor(private readonly getSettings: () => AiSettings) {
@@ -86,9 +115,13 @@ export class AiService {
 
         const signal = options.signal ?? new AbortController().signal;
         const provider = this.providerFor(profile);
+        if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+        const key = this.cacheKey(messages, profile, options);
+        const cached = options.bypassCache ? undefined : this.cache.get(key);
+        if (cached) return { ...cached };
 
         try {
-            return await provider.complete(
+            const result = await provider.complete(
                 {
                     profile,
                     messages,
@@ -98,6 +131,8 @@ export class AiService {
                 signal,
                 this.settings.requestTimeoutMs
             );
+            if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+            return this.remember(key, result);
         } catch (error) {
             throw toAiError(error);
         }
@@ -141,20 +176,29 @@ export class AiService {
 
         const signal = options.signal ?? new AbortController().signal;
         const provider = this.providerFor(profile);
+        if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+        const key = this.cacheKey(messages, profile, options);
+        const cached = options.bypassCache ? undefined : this.cache.get(key);
+        if (cached) {
+            options.onDelta(cached.text);
+            return { ...cached };
+        }
 
         if (this.canStream(profile) && provider.stream) {
             try {
-                return await provider.stream(
+                const result = await provider.stream(
                     {
                         profile,
                         messages,
                         temperature: options.temperature,
                         maxTokens: options.maxTokens
                     },
-                    { onDelta: options.onDelta },
+                    { onDelta: options.onDelta, onReasoning: options.onReasoning },
                     signal,
                     this.settings.requestTimeoutMs
                 );
+                if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+                return this.remember(key, result);
             } catch (error) {
                 const normalized = toAiError(error);
                 // An abort and a refusal from the provider are both real
@@ -175,14 +219,23 @@ export class AiService {
     }
 
     /**
-     * A minimal round trip used by the "Test connection" button. Kept
-     * deliberately tiny — one token of output is enough to prove the key,
-     * the URL and the model name all line up.
+     * A minimal round trip used by the "Test connection" button. What it has to
+     * prove is that the key, the URL and the model name all line up — the
+     * answer's content is beside the point.
+     *
+     * The budget is nonetheless not as tiny as that invites. A reasoning model
+     * spends output tokens thinking before it says anything, so a cap of a
+     * dozen or so is consumed entirely by the reasoning trace: the provider
+     * answers 200 with `finish_reason: "length"` and an empty message, the
+     * response parser rightly refuses an empty answer, and the button reports a
+     * failed connection for a connection that plainly worked. Room for a short
+     * thought and one word costs a fraction of a cent and removes that whole
+     * class of false failure.
      */
     async testConnection(profile: AiProfile, signal?: AbortSignal): Promise<string> {
         const result = await this.complete(
             [{ role: 'user', content: 'Reply with the single word: ok' }],
-            { profile, signal, maxTokens: 16 }
+            { profile, signal, maxTokens: TEST_CONNECTION_MAX_TOKENS, bypassCache: true }
         );
         return result.model ?? profile.model;
     }

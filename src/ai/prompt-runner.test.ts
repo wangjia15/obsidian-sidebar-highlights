@@ -4,7 +4,7 @@ import type { Highlight } from '../../main';
 import { i18n } from '../i18n';
 import { cloneAiSettings, DEFAULT_AI_SETTINGS } from './types';
 import type { AiProfile, PromptPreset } from './types';
-import { collectContextSource, preparePromptRun, uiLanguageName } from './prompt-runner';
+import { collectContextSource, preparePromptRun, prepareNotePromptRun, uiLanguageName } from './prompt-runner';
 
 const NOTE_CONTENT = '# Heading\n\nThe full body of the note, read from disk.';
 
@@ -22,6 +22,7 @@ const PROMPT: PromptPreset = {
     name: 'Test prompt',
     template: 'Selection: {{selection}}\nNote: {{note}}',
     builtin: false,
+    scope: 'highlight',
     enabled: true,
     outputTarget: 'both',
     sortOrder: 0
@@ -162,4 +163,43 @@ describe('preparePromptRun', () => {
         const run = await preparePromptRun(plugin, prompt, makeHighlight(), { input: 'focus on tone' });
         expect(run.messages.at(-1)?.content).toContain('focus on tone');
     });
+});
+
+
+it('applies output language to both highlight and whole-note prompts, with per-run overrides', async () => {
+    const { plugin } = makePlugin({ defaultTargetLanguage: 'French' });
+    const prompt = { ...PROMPT, system: 'Answer in the same language as the text.' };
+    const run = await preparePromptRun(plugin, prompt, makeHighlight());
+    expect(run.messages[0].content).toContain('Output language: French');
+    const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
+    plugin.highlights = new Map();
+    const noteRun = await prepareNotePromptRun(plugin, { ...prompt, scope: 'note' }, file, { targetLanguage: 'German' });
+    expect(noteRun.messages[0].content).toContain('Output language: German');
+    expect(noteRun.payloadChars).toBe(noteRun.messages.reduce((sum, message) => sum + message.content.length, 0));
+    const extraction = await prepareNotePromptRun(plugin, { ...prompt, scope: 'note', outputTarget: 'highlights' }, file);
+    expect(extraction.messages[0].content).not.toContain('Output language:');
+});
+
+it('prepares every part of a long whole note instead of truncating its tail', async () => {
+    const { plugin, cachedRead } = makePlugin({ noteCharLimit: 500 });
+    const longNote = `# One\n\n${'a'.repeat(480)}\n\n# Two\n\n${'b'.repeat(480)}\n\n${'c'.repeat(300)}`;
+    cachedRead.mockResolvedValue(longNote);
+    plugin.highlights = new Map();
+    const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
+    const prompt: PromptPreset = {
+        ...PROMPT,
+        scope: 'note',
+        template: '{{note}}',
+        outputTarget: 'new-html'
+    };
+
+    const run = await prepareNotePromptRun(plugin, prompt, file);
+    expect(run.chunkCount).toBeGreaterThan(1);
+    expect(run.messageBatches).toHaveLength(run.chunkCount);
+    const sent = run.messageBatches?.map(batch => batch.at(-1)?.content ?? '').join('') ?? '';
+    expect((sent.match(/a/g) ?? [])).toHaveLength(480);
+    expect((sent.match(/b/g) ?? [])).toHaveLength(480);
+    expect((sent.match(/c/g) ?? [])).toHaveLength(300);
+    expect(run.messageBatches?.every(batch => batch[0].content.includes('HTML fragment'))).toBe(true);
+    expect(run.payloadChars).toBe(run.messageBatches?.flat().reduce((sum, message) => sum + message.content.length, 0));
 });

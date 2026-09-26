@@ -1,4 +1,13 @@
-import { buildVariables, payloadSize, truncate, windowAround, type ContextSource } from './context-builder';
+import {
+    buildNoteVariables,
+    buildVariables,
+    formatHighlightList,
+    payloadSize,
+    truncate,
+    windowAround,
+    type ContextSource,
+    type NoteContextSource
+} from './context-builder';
 import { DEFAULT_AI_SETTINGS, cloneAiSettings, type AiSettings } from './types';
 
 function settings(overrides: Partial<AiSettings> = {}): AiSettings {
@@ -209,6 +218,76 @@ describe('buildVariables target language', () => {
 
     it('is undefined when there is nothing to fall back to', () => {
         expect(buildVariables(source(), settings()).targetLang).toBeUndefined();
+    });
+});
+
+describe('formatHighlightList', () => {
+    it('lists passages as bullets with comments nested under them', () => {
+        expect(formatHighlightList([
+            { text: 'first passage', comments: ['a thought'] },
+            { text: 'second passage' }
+        ])).toBe('- first passage\n    - a thought\n- second passage');
+    });
+
+    it('flattens a passage that spans lines onto one bullet', () => {
+        expect(formatHighlightList([{ text: 'runs\nacross  lines' }]))
+            .toBe('- runs across lines');
+    });
+
+    it('drops empty passages and empty comments', () => {
+        expect(formatHighlightList([
+            { text: '   ' },
+            { text: 'kept', comments: ['', '  ', 'real'] }
+        ])).toBe('- kept\n    - real');
+    });
+
+    it('is empty for no highlights', () => {
+        expect(formatHighlightList([])).toBe('');
+        expect(formatHighlightList(undefined)).toBe('');
+    });
+});
+
+describe('buildNoteVariables', () => {
+    const noteSource = (overrides: Partial<NoteContextSource> = {}): NoteContextSource =>
+        ({ noteContent: 'The whole note text.', noteTitle: 'A note', filePath: 'a/note.md', ...overrides });
+
+    it('sends the note even with includeNoteContext off', () => {
+        // Running a prompt whose subject is the document is the decision to
+        // send the document; gating it would answer about nothing.
+        const variables = buildNoteVariables(noteSource(), settings({ includeNoteContext: false }));
+        expect(variables.note).toBe('The whole note text.');
+    });
+
+    it('bounds the note by noteCharLimit, not contextCharLimit', () => {
+        const variables = buildNoteVariables(
+            noteSource({ noteContent: 'abcdefghij' }),
+            settings({ contextCharLimit: 2, noteCharLimit: 5 })
+        );
+        expect(variables.note).toBe('abcde…');
+    });
+
+    it('resolves the title and path', () => {
+        const variables = buildNoteVariables(noteSource(), settings());
+        expect(variables.noteTitle).toBe('A note');
+        expect(variables.filePath).toBe('a/note.md');
+    });
+
+    it('fills {{highlights}} from the note\'s own highlights', () => {
+        const variables = buildNoteVariables(
+            noteSource({ highlights: [{ text: 'a passage', comments: ['a note on it'] }] }),
+            settings()
+        );
+        expect(variables.highlights).toBe('- a passage\n    - a note on it');
+    });
+
+    it('leaves {{highlights}} unset for a note with none', () => {
+        expect(buildNoteVariables(noteSource(), settings()).highlights).toBeUndefined();
+    });
+
+    it('never resolves the highlight-only variables', () => {
+        const variables = buildNoteVariables(noteSource(), settings());
+        expect(variables.selection).toBeUndefined();
+        expect(variables.context).toBeUndefined();
     });
 });
 
