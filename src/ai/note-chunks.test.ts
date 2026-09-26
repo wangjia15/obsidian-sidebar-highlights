@@ -24,6 +24,12 @@ describe('splitNoteIntoChunks', () => {
 });
 
 describe('chapter boundaries', () => {
+    it('avoids a tiny opening chunk when an oversized chapter has an early blank line', () => {
+        const note = '# Big\nIntro paragraph.\n\n' + 'X'.repeat(500);
+        const chunks = splitNoteIntoChunks(note, 100);
+        expect(chunks.map(chunk => chunk.length)).toEqual([100, 100, 100, 100, 100, 24]);
+        expect(chunks.join('')).toBe(note);
+    });
     it('keeps a complete chapter even when a later subheading fits the window', () => {
         const one = '# One\n' + 'a'.repeat(25) + '\n\n';
         const two = '# Two\nintro\n\n## Detail\n' + 'b'.repeat(35);
@@ -45,7 +51,7 @@ describe('chapter boundaries', () => {
     });
 
     it('uses paragraphs before hard cuts in an oversized section', () => {
-        const first = '# A\nshort\n\n';
+        const first = '# A\nshorter\n\n';
         const second = 'b'.repeat(25) + '\n\n';
         const third = 'c'.repeat(25);
         expect(splitNoteIntoChunks(first + second + third, 30)).toEqual([first, second, third]);

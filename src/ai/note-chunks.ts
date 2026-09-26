@@ -1,3 +1,5 @@
+const MIN_CHUNK_RATIO = 0.45;
+
 interface Range { start: number; end: number }
 interface Heading { offset: number; level: number }
 
@@ -5,6 +7,8 @@ interface Heading { offset: number; level: number }
  * Preserve complete chapters, descending into subheadings only for oversized
  * chapters. Frontmatter and fenced code are atomic and may exceed the limit.
  * Plain notes retain the original paragraph/line splitting behavior.
+ * heading-group.ts consumes Obsidian metadata-cache headings; this splitter
+ * parses source text directly to remain a pure function.
  */
 export function splitNoteIntoChunks(text: string, requestedLimit: number): string[] {
     if (text === '') return [''];
@@ -22,7 +26,7 @@ export function splitNoteIntoChunks(text: string, requestedLimit: number): strin
                 break;
             }
             const window = text.slice(start, cut);
-            const minimum = headings.length ? start : start + Math.floor(limit * 0.45);
+            const minimum = start + Math.floor(limit * MIN_CHUNK_RATIO);
             const paragraphs = Array.from(window.matchAll(/\n\s*\n/g), match => start + (match.index ?? 0) + (headings.length ? match[0].length : 1))
                 .filter(offset => offset > start && offset >= minimum && safe(offset));
             const lines = headings.length ? [] : Array.from(window.matchAll(/\n/g), match => start + (match.index ?? 0) + 1)
@@ -30,8 +34,8 @@ export function splitNoteIntoChunks(text: string, requestedLimit: number): strin
             const atomic = protectedRanges.find(range => range.start < cut && cut < range.end);
             cut = atomic ? (atomic.start > start ? atomic.start : atomic.end)
                 : paragraphs.pop() ?? lines.pop() ?? cut;
-            const region = protectedRanges.find(range => range.start < cut && cut < range.end);
-            if (region) cut = region.start > start ? region.start : region.end;
+            // Paragraph/line candidates are already safe; atomic adjustment
+            // selects a region edge, so no second protected-range check is needed.
             // Move a hard cut away from a surrogate pair. At limit 1 the pair
             // must exceed the limit rather than being corrupted.
             const last = text.charCodeAt(cut - 1);
