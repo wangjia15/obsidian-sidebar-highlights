@@ -259,3 +259,23 @@ it('offers a merge request for a split synthesis prompt, restating the task with
     const joined = await prepareNotePromptRun(plugin, { ...prompt, mergeParts: false }, file);
     expect(joined.mergeMessages).toBeUndefined();
 });
+
+it('prepares complete chapters and an oversized atomic block with accurate counts and merge instructions', async () => {
+    const { plugin, cachedRead } = makePlugin({ noteCharLimit: 500, outputLanguageMode: 'source' });
+    const one = '# One\n' + 'a'.repeat(280) + '\n\n';
+    const two = '# Two\n' + 'b'.repeat(300) + '\n\n';
+    const code = '```ts\n' + 'x'.repeat(600) + '\n```\n';
+    const chunks = [one, two, code];
+    cachedRead.mockResolvedValue(chunks.join(''));
+    plugin.highlights = new Map();
+    const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
+    const prompt: PromptPreset = { ...PROMPT, scope: 'note', outputTarget: 'preview', template: '{{note}}', mergeParts: true };
+    const run = await prepareNotePromptRun(plugin, prompt, file);
+    expect(run.chunkCount).toBe(3);
+    expect(run.messageBatches?.map(batch => batch.find(message => message.role === 'user')?.content)).toEqual(chunks.map(chunk => chunk.trim()));
+    run.messageBatches?.forEach((batch, index) => {
+        expect(batch[0].content).toContain(`split into 3 parts. This request contains part ${index + 1}`);
+    });
+    expect(run.payloadChars).toBe(run.messageBatches?.flat().reduce((sum, message) => sum + message.content.length, 0));
+    expect(run.mergeMessages?.(['one', 'two', 'three']).map(message => message.content).join('\n')).toContain('Partial result 3 of 3');
+});
