@@ -82,6 +82,7 @@ export class AiResultView extends ItemView {
     private headerEl!: HTMLElement;
     private bodyEl!: HTMLElement;
     private statusEl!: HTMLElement;
+    private runningLabelEl!: HTMLElement;
     private followUpEl!: HTMLElement;
     private footerEl!: HTMLElement;
 
@@ -386,7 +387,8 @@ export class AiResultView extends ItemView {
                     this.result = text;
                     this.renderStreamingText();
                 },
-                onReasoning: text => this.renderThinking(text)
+                onReasoning: text => this.renderThinking(text),
+                onRetry: ({ attempt }) => this.runningLabelEl.setText(t('modals.aiResult.retrying', { count: attempt }))
             }
         );
     }
@@ -418,7 +420,7 @@ export class AiResultView extends ItemView {
 
         const spinner = this.statusEl.createDiv({ cls: 'sh-ai-result-spinner' });
         setIcon(spinner, 'loader');
-        this.statusEl.createSpan({ text: t('modals.aiResult.generating') });
+        this.runningLabelEl = this.statusEl.createSpan({ text: t('modals.aiResult.generating') });
 
         const stop = this.statusEl.createEl('button', { cls: 'sh-ai-result-stop', text: t('modals.aiResult.stop') });
         stop.addEventListener('click', () => this.controller?.abort());

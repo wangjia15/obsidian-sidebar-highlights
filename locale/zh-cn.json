@@ -203,7 +203,8 @@
         },
         "baseUrl": {
           "name": "Base URL",
-          "desc": "需包含版本号段，与服务商文档中给出的写法保持一致。"
+          "desc": "需包含版本号段，与服务商文档中给出的写法保持一致。",
+          "placeholder": "https://api.example.com/v1"
         },
         "apiKey": {
           "name": "API 密钥",
@@ -352,6 +353,10 @@
           "cleared": "摘录段落将写为普通的 ==文本==",
           "plain": "未设置颜色：摘录段落写为普通的 ==文本==。"
         }
+      },
+      "maxRetries": {
+        "name": "最大重试次数",
+        "desc": "遇到临时错误时自动重试，默认 2 次；设为 0 即关闭。"
       }
     },
     "detection": {
@@ -496,7 +501,8 @@
       "server": "服务商内部出错。",
       "aborted": "请求已停止。",
       "unknown": "请求失败。",
-      "noModelList": "{{provider}} 不支持拉取模型列表。"
+      "noModelList": "{{provider}} 不支持拉取模型列表。",
+      "retried": "已重试 {{count}} 次"
     },
     "profile": {
       "defaultName": "{{provider}} 配置"
@@ -531,7 +537,8 @@
       "fileMissing": "该笔记已不在 vault 中。",
       "emptyAnswer": "模型没有返回可插入的内容。",
       "writeFailed": "无法写入该笔记。",
-      "highlightMoved": "该高亮在侧栏上次读取之后发生了变化，没有可安全附加评论的位置。请刷新侧栏后重试。"
+      "highlightMoved": "该高亮在侧栏上次读取之后发生了变化，没有可安全附加评论的位置。请刷新侧栏后重试。",
+      "retrying": "第 {{count}} 次重试中…"
     },
     "batch": {
       "empty": "没有可执行的高亮",
@@ -541,7 +548,8 @@
       "done": "已完成 {{count}} 条高亮。",
       "stopped": "已停止，完成 {{count}} 条高亮。",
       "failures": "{{count}} 条失败：{{names}}",
-      "writeFailed": "评论写入失败"
+      "writeFailed": "评论写入失败",
+      "retrying": "{{done}}/{{total}} · {{current}} · 第 {{count}} 次重试中…"
     },
     "note": {
       "working": "正在对《{{note}}》运行 {{name}}…",
@@ -881,7 +889,8 @@
       "unknownVariable": "该模板引用了 {{names}}，它不是可用变量，已按原样发送。",
       "createMarkdown": "创建 Markdown 文档",
       "createHtml": "创建 HTML 文档",
-      "insertSection": "写入笔记"
+      "insertSection": "写入笔记",
+      "retrying": "第 {{count}} 次重试中…"
     },
     "diagramZoom": {
       "zoomIn": "放大",

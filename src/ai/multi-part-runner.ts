@@ -1,10 +1,11 @@
-import type { AiService } from './ai-service';
+import type { AiService, RetryEvent } from './ai-service';
 import type { AiMessage, AiProfile, AiResult, AiUsage } from './types';
 
 export interface MultiPartOptions {
     profile: AiProfile;
     signal: AbortSignal;
     bypassCache?: boolean;
+    onRetry?: (event: RetryEvent) => void;
     /** Receives the complete combined output whenever it changes. */
     onText?: (text: string) => void;
     /**
@@ -52,6 +53,7 @@ export async function runAiMessageBatches(
                 profile: options.profile,
                 signal: options.signal,
                 bypassCache: options.bypassCache,
+                onRetry: options.onRetry,
                 onDelta: chunk => {
                     current += chunk;
                     options.onText?.(`${prefix}${current}`);
@@ -70,7 +72,8 @@ export async function runAiMessageBatches(
             : await service.complete(messages, {
                 profile: options.profile,
                 signal: options.signal,
-                bypassCache: options.bypassCache
+                bypassCache: options.bypassCache,
+                onRetry: options.onRetry
             });
     };
 

@@ -61,6 +61,11 @@ describe('AI locale keys', () => {
         expect(t('settings.ai.actions.testFailed', { reason: 'boom' })).toContain('boom');
     });
 
+    it.each(['modals.aiResult.retrying', 'ai.errors.retried', 'ai.run.retrying', 'ai.batch.retrying'])('interpolates the retry count in %s', key => {
+        expect(t(key, { count: 2 })).toContain('2');
+        expect(t(key, { count: 2 })).not.toContain('{count}');
+    });
+
     it('gives every builtin provider a label for the settings dropdown', () => {
         // Provider labels are product names, so they live in the registry
         // rather than the locale files. A gap would render as a blank option.

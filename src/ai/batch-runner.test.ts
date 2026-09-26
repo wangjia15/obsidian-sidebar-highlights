@@ -1,3 +1,7 @@
+import { AiService, describeAiError } from './ai-service';
+import { AiError, DEFAULT_AI_SETTINGS, cloneAiSettings } from './types';
+import { i18n } from '../i18n';
+beforeAll(async () => { await i18n.init(); });
 import { runBatch, summarize, type BatchItem, type BatchOutcome } from './batch-runner';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -170,5 +174,90 @@ describe('summarize', () => {
         const failed = ['a', 'b', 'c', 'd', 'e'].map(label => ({ label, reason: 'x' }));
         expect(summarize(outcome({ succeeded: 0, failed }), format))
             .toBe('Finished 0. 5 failed: a, b, c +2');
+    });
+});
+
+describe('runBatch with service retries', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    });
+    afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    function setup() {
+        const profile = { id: 'p', name: 'Test', providerId: 'openai' as const, apiKey: 'test', baseUrl: 'https://example.com', model: 'test' };
+        const settings = { ...cloneAiSettings(DEFAULT_AI_SETTINGS), enabled: true, profiles: [profile] };
+        const service = new AiService(() => settings);
+        const complete = jest.fn();
+        jest.spyOn(service, 'providerFor').mockReturnValue({ kind: 'fake', complete });
+        const onProgress = jest.fn();
+        const controller = new AbortController();
+        const pending = () => runBatch({
+            items: items('a', 'b'), signal: controller.signal, describeError: describeAiError, onProgress,
+            run: (value, signal, onRetry) => service.complete([{ role: 'user', content: value }], { signal, onRetry, bypassCache: true })
+        });
+        return { complete, onProgress, controller, pending };
+    }
+
+    it('reports a transient retry and keeps the recovered item out of the failure list', async () => {
+        const { complete, onProgress, pending } = setup();
+        complete.mockRejectedValueOnce(new AiError('server', '503')).mockResolvedValue({ text: 'answer' });
+        const outcome = pending();
+        await jest.advanceTimersByTimeAsync(0);
+        expect(onProgress).toHaveBeenLastCalledWith({ done: 0, total: 2, current: 'a', retryAttempt: 1 });
+        expect(complete).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(1000);
+        expect(await outcome).toEqual({ succeeded: 2, failed: [], aborted: false });
+        expect(complete).toHaveBeenCalledTimes(3);
+        // Advancing to the next item clears the previous item's retry status.
+        expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+            { done: 0, total: 2, current: 'a' },
+            { done: 0, total: 2, current: 'a', retryAttempt: 1 },
+            { done: 1, total: 2, current: 'b' },
+            { done: 2, total: 2, current: '' }
+        ]);
+    });
+
+    it('gives each item its own service retry budget', async () => {
+        const { complete, onProgress, pending } = setup();
+        complete.mockRejectedValueOnce(new AiError('rate-limit', '429'))
+            .mockRejectedValueOnce(new AiError('server', '503')).mockResolvedValueOnce({ text: 'a' })
+            .mockRejectedValueOnce(new AiError('timeout', 'slow'))
+            .mockRejectedValueOnce(new AiError('network', 'offline')).mockResolvedValueOnce({ text: 'b' });
+        const outcome = pending();
+        await jest.runAllTimersAsync();
+        expect(await outcome).toEqual({ succeeded: 2, failed: [], aborted: false });
+        expect(complete).toHaveBeenCalledTimes(6);
+        expect(onProgress.mock.calls.map(([progress]) => progress).filter(progress => progress.retryAttempt))
+            .toEqual([
+                { done: 0, total: 2, current: 'a', retryAttempt: 1 },
+                { done: 0, total: 2, current: 'a', retryAttempt: 2 },
+                { done: 1, total: 2, current: 'b', retryAttempt: 1 },
+                { done: 1, total: 2, current: 'b', retryAttempt: 2 }
+            ]);
+    });
+
+    it('records only the final exhausted failure with its retry count and continues', async () => {
+        const { complete, pending } = setup();
+        complete.mockRejectedValueOnce(new AiError('server', '503'))
+            .mockRejectedValueOnce(new AiError('server', '503'))
+            .mockRejectedValueOnce(new AiError('server', '503')).mockResolvedValueOnce({ text: 'b' });
+        const outcome = pending();
+        await jest.runAllTimersAsync();
+        const result = await outcome;
+        expect(result).toMatchObject({ succeeded: 1, aborted: false });
+        expect(result.failed).toHaveLength(1);
+        expect(result.failed[0]).toEqual({ label: 'a', reason: expect.stringContaining('Retried 2') });
+    });
+
+    it('stops a backing-off item immediately without failure or starting the next item', async () => {
+        const { complete, controller, pending } = setup();
+        complete.mockRejectedValue(new AiError('server', '503'));
+        const outcome = pending();
+        await jest.advanceTimersByTimeAsync(0);
+        controller.abort();
+        expect(await outcome).toEqual({ succeeded: 0, failed: [], aborted: true });
+        expect(jest.getTimerCount()).toBe(0);
+        expect(complete).toHaveBeenCalledTimes(1);
     });
 });

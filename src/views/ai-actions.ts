@@ -173,6 +173,7 @@ async function runDirectToComment(
             // there. The preview modal keeps the cache — reopening a panel is
             // the case it exists for.
             bypassCache: true,
+            onRetry: ({ attempt }) => progressEl.setText(t('ai.run.retrying', { count: attempt })),
             onDelta: chunk => {
                 streamed += chunk;
                 progressEl.setText(tail(streamed, PROGRESS_TAIL));
@@ -185,7 +186,7 @@ async function runDirectToComment(
                 progressEl.setText(tail(thinking, PROGRESS_TAIL));
             },
             onFallback: () => {
-                // The partial text belongs to an attempt being redone.
+                // Reset waiting state before the non-streaming retry.
                 streamed = '';
                 thinking = '';
                 progressEl.setText('');
@@ -381,13 +382,14 @@ export async function runPromptOnHighlights(
         delayMs: 350,
         describeError: describeAiError,
         onProgress: progress => {
-            progressEl.setText(t('ai.batch.progress', {
+            progressEl.setText(t(progress.retryAttempt === undefined ? 'ai.batch.progress' : 'ai.batch.retrying', {
                 done: progress.done,
                 total: progress.total,
-                current: progress.current
+                current: progress.current,
+                count: progress.retryAttempt
             }));
         },
-        run: async (highlight, signal) => {
+        run: async (highlight, signal, onRetry) => {
             const prepared = await preparePromptRun(plugin, prompt, highlight);
             const answer = await plugin.aiService.complete(prepared.messages, {
                 profile: prepared.profile,
@@ -397,7 +399,8 @@ export async function runPromptOnHighlights(
                 // answers, not a second copy of the last ones. Two highlights
                 // with identical text still each get their own request, which
                 // is the price of never writing a stale answer.
-                bypassCache: true
+                bypassCache: true,
+                onRetry
             });
             plugin.recordAiUsage(answer);
 

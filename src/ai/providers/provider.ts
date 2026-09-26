@@ -86,9 +86,24 @@ export function kindForStatus(status: number): AiErrorKind {
     return 'unknown';
 }
 
-export function errorForStatus(status: number, bodyText: string): AiError {
+/** Accept delta seconds or an HTTP date; ignore malformed headers. */
+function retryAfterDelay(value?: string | null): number | undefined {
+    if (!value?.trim()) return undefined;
+    const trimmed = value.trim();
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+        const ms = Number(trimmed) * 1000;
+        return Number.isFinite(ms) ? ms : undefined;
+    }
+    // Date.parse accepts odd strings such as "-1" as dates; require the HTTP
+    // date's time and timezone so an invalid delta never becomes a delay.
+    if (!/\d{2}:\d{2}:\d{2}\s+GMT$/i.test(trimmed)) return undefined;
+    const date = Date.parse(trimmed);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+export function errorForStatus(status: number, bodyText: string, retryAfter?: string | null): AiError {
     const kind = kindForStatus(status);
-    return new AiError(kind, `HTTP ${status}`, { status, detail: summarizeBody(bodyText) });
+    return new AiError(kind, `HTTP ${status}`, { status, detail: summarizeBody(bodyText), retryAfterMs: retryAfterDelay(retryAfter) });
 }
 
 /**
@@ -130,7 +145,8 @@ export async function httpJson(call: HttpCall): Promise<HttpResult> {
         const text = response.text ?? '';
 
         if (response.status < 200 || response.status >= 300) {
-            throw errorForStatus(response.status, text);
+            const retryAfter = Object.entries(response.headers ?? {}).find(([key]) => key.toLowerCase() === 'retry-after')?.[1];
+            throw errorForStatus(response.status, text, retryAfter);
         }
 
         let json: unknown = undefined;
@@ -167,7 +183,7 @@ export function toAiError(error: unknown): AiError {
         if (error.name === 'AbortError') {
             return new AiError('aborted', 'Request aborted');
         }
-        if (/ERR_INTERNET_DISCONNECTED|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ERR_NAME_NOT_RESOLVED|net::/i.test(message)) {
+        if (/ERR_INTERNET_DISCONNECTED|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ERR_NAME_NOT_RESOLVED|Failed to fetch|fetch failed|NetworkError|Load failed|net::/i.test(message)) {
             return new AiError('network', redact(message));
         }
         if (/timeout|ETIMEDOUT/i.test(message)) {
@@ -270,11 +286,8 @@ export async function httpStream(call: StreamCall): Promise<string> {
     try {
         resetIdleTimer();
 
-        // `fetch` rather than `requestUrl`, and the lint warning about it is
-        // expected: requestUrl cannot stream, which is the whole reason this
-        // path exists. The CORS exposure that brings is why streaming is
-        // desktop-only and why every caller falls back on failure.
-        const response = await fetch(call.url, {
+        // Streaming is desktop-only; requestUrl is the non-streaming fallback.
+        const response = await window.fetch(call.url, {
             method: 'POST',
             headers: { ...call.headers, Accept: 'text/event-stream' },
             body: JSON.stringify(call.body),
@@ -282,7 +295,7 @@ export async function httpStream(call: StreamCall): Promise<string> {
         });
 
         if (!response.ok) {
-            throw errorForStatus(response.status, await response.text().catch(() => ''));
+            throw errorForStatus(response.status, await response.text().catch(() => ''), response.headers?.get('retry-after'));
         }
         if (!response.body) {
             throw new AiError('network', 'The provider returned no response body');

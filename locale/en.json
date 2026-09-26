@@ -203,7 +203,8 @@
         },
         "baseUrl": {
           "name": "Base URL",
-          "desc": "Include the version segment, exactly as the provider's documentation shows it."
+          "desc": "Include the version segment, exactly as the provider's documentation shows it.",
+          "placeholder": "https://api.example.com/v1"
         },
         "apiKey": {
           "name": "API key",
@@ -352,6 +353,10 @@
           "cleared": "Extracted passages will be written as plain ==text==",
           "plain": "No color set: extracted passages are written as plain ==text==."
         }
+      },
+      "maxRetries": {
+        "name": "Maximum retries",
+        "desc": "Retry transient failures automatically. Default: 2. Set to 0 to disable retries."
       }
     },
     "detection": {
@@ -496,7 +501,8 @@
       "server": "The provider hit an internal error.",
       "aborted": "Request stopped.",
       "unknown": "The request failed.",
-      "noModelList": "{{provider}} does not support listing models."
+      "noModelList": "{{provider}} does not support listing models.",
+      "retried": "Retried {{count}} time(s)"
     },
     "profile": {
       "defaultName": "{{provider}} profile"
@@ -531,7 +537,8 @@
       "fileMissing": "That note is no longer in the vault.",
       "emptyAnswer": "The model returned nothing to insert.",
       "writeFailed": "Could not write to the note.",
-      "highlightMoved": "The highlight has changed since the sidebar last read it, so there is nowhere safe to attach the comment. Refresh the sidebar and try again."
+      "highlightMoved": "The highlight has changed since the sidebar last read it, so there is nowhere safe to attach the comment. Refresh the sidebar and try again.",
+      "retrying": "Retrying {{count}}…"
     },
     "batch": {
       "empty": "No highlights to run this on",
@@ -541,7 +548,8 @@
       "done": "Finished {{count}} highlights.",
       "stopped": "Stopped after {{count}} highlights.",
       "failures": "{{count}} failed: {{names}}",
-      "writeFailed": "The comment could not be written"
+      "writeFailed": "The comment could not be written",
+      "retrying": "{{done}}/{{total}} · {{current}} · Retrying {{count}}…"
     },
     "note": {
       "working": "Running {{name}} on {{note}}…",
@@ -881,7 +889,8 @@
       "unknownVariable": "This template references {{names}}, which is not a variable. It was sent as written.",
       "createMarkdown": "Create Markdown document",
       "createHtml": "Create HTML document",
-      "insertSection": "Write into the note"
+      "insertSection": "Write into the note",
+      "retrying": "Retrying {{count}}…"
     },
     "diagramZoom": {
       "zoomIn": "Zoom in",

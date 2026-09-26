@@ -101,16 +101,22 @@ export class AiError extends Error {
     readonly kind: AiErrorKind;
     readonly status?: number;
     readonly retriable: boolean;
+    /** Parsed Retry-After delay; the service caps it before waiting. */
+    readonly retryAfterMs?: number;
+    /** Dispatched retries on a final failure; absent when none were made. */
+    readonly retries?: number;
     /** Provider-supplied detail, already stripped of anything key-shaped. */
     readonly detail?: string;
 
-    constructor(kind: AiErrorKind, message: string, options: { status?: number; retriable?: boolean; detail?: string } = {}) {
+    constructor(kind: AiErrorKind, message: string, options: { status?: number; retriable?: boolean; detail?: string; retryAfterMs?: number; retries?: number } = {}) {
         super(message);
         this.name = 'AiError';
         this.kind = kind;
         this.status = options.status;
         this.retriable = options.retriable ?? (kind === 'rate-limit' || kind === 'server' || kind === 'network' || kind === 'timeout');
         this.detail = options.detail;
+        this.retryAfterMs = options.retryAfterMs;
+        this.retries = options.retries;
     }
 }
 
@@ -220,6 +226,8 @@ export interface AiSettings {
     /** Desktop only; falls back to a non-streaming retry when fetch fails. */
     streaming: boolean;
     requestTimeoutMs: number;
+    /** Additional attempts after a transient failure; zero disables retries. */
+    maxRetries: number;
     /**
      * Colour written into the note for a highlight the model picked out, as a
      * hex value. Empty writes plain `==text==`, like any other highlight.
@@ -301,6 +309,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
     // single blob after a silent wait, which reads as the plugin being slow.
     streaming: true,
     requestTimeoutMs: 60000,
+    maxRetries: 2,
     // Plain `==text==`, the same as a highlight made by hand. Opting into a
     // colour is a decision about the note's own markup, so it is the user's.
     extractedHighlightColor: '',

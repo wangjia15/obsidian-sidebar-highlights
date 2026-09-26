@@ -8,6 +8,7 @@
  */
 
 import type { AiResult } from './types';
+import type { RetryEvent } from './ai-service';
 
 export interface BatchItem<T> {
     /** What the summary calls this item when it fails. */
@@ -21,6 +22,8 @@ export interface BatchProgress {
     total: number;
     /** The item about to run, for the progress line. */
     current: string;
+    /** Present while the current item is retrying; reset for the next item. */
+    retryAttempt?: number;
 }
 
 export interface BatchFailure {
@@ -39,7 +42,7 @@ export interface BatchOptions<T> {
     items: BatchItem<T>[];
     signal: AbortSignal;
     /** Runs one item; rejecting counts as a failure, not the end of the run. */
-    run: (value: T, signal: AbortSignal) => Promise<AiResult | void>;
+    run: (value: T, signal: AbortSignal, onRetry: (event: RetryEvent) => void) => Promise<AiResult | void>;
     onProgress?: (progress: BatchProgress) => void;
     /** Turns a thrown value into something worth showing the user. */
     describeError: (error: unknown) => string;
@@ -68,7 +71,9 @@ export async function runBatch<T>(options: BatchOptions<T>): Promise<BatchOutcom
         onProgress?.({ done: index, total: items.length, current: item.label });
 
         try {
-            await run(item.value, signal);
+            await run(item.value, signal, event => {
+                onProgress?.({ done: index, total: items.length, current: item.label, retryAttempt: event.attempt });
+            });
             succeeded++;
         } catch (error) {
             if (signal.aborted) {

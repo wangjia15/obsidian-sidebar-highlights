@@ -158,7 +158,7 @@ describe('AiService requests', () => {
         jest.useFakeTimers();
         respondNever();
         const target = profile();
-        const service = new AiService(() => settings({ profiles: [target], activeProfileId: target.id, requestTimeoutMs: 25 }));
+        const service = new AiService(() => settings({ profiles: [target], activeProfileId: target.id, requestTimeoutMs: 25, maxRetries: 0 }));
 
         const pending = service.complete([{ role: 'user', content: 'hi' }]);
         const assertion = expect(pending).rejects.toMatchObject({ kind: 'timeout' });
@@ -269,7 +269,7 @@ describe('AI answer cache', () => {
     });
 
     it('does not cache failures or return cached answers after cancellation', async () => {
-        const service = new AiService(() => settings({ profiles: [profile()] }));
+        const service = new AiService(() => settings({ profiles: [profile()], maxRetries: 0 }));
         const complete = jest.spyOn(service.providerFor(profile()), 'complete')
             .mockRejectedValueOnce(new AiError('network', 'offline')).mockResolvedValue({ text: 'answer' });
         const messages = [{ role: 'user' as const, content: 'question' }];
