@@ -1,4 +1,4 @@
-import { httpJson, joinUrl, kindForStatus, redact, toAiError } from './provider';
+import { httpJson, httpStream, joinUrl, kindForStatus, redact, toAiError } from './provider';
 import { AiError } from '../types';
 import { mockRequestUrl, requestAt, resetRequests, respondNever, respondWith } from '../test-support';
 
@@ -55,6 +55,10 @@ describe('toAiError', () => {
 
     it('recognizes a dropped connection as a network failure', () => {
         expect(toAiError(new Error('net::ERR_INTERNET_DISCONNECTED')).kind).toBe('network');
+    });
+
+    it.each(['Failed to fetch', 'fetch failed', 'NetworkError when attempting to fetch resource', 'Load failed'])('recognizes browser network failure: %s', message => {
+        expect(toAiError(new TypeError(message)).kind).toBe('network');
     });
 
     it('recognizes a refused local port as a network failure', () => {
@@ -159,4 +163,37 @@ describe('httpJson', () => {
         expect(error).toBeInstanceOf(AiError);
         expect((error as AiError).detail).not.toContain('abcd1234efgh5678');
     });
+});
+
+describe('Retry-After transport metadata', () => {
+    beforeEach(() => { resetRequests(); jest.useFakeTimers(); });
+    afterEach(() => { jest.useRealTimers(); });
+
+    it.each([
+        ['Retry-After', '3', 3000],
+        ['retry-after', '0', 0],
+        ['RETRY-AFTER', 'Thu, 01 Jan 2026 00:00:05 GMT', 5000],
+        ['retry-after', 'Wed, 31 Dec 2025 23:59:59 GMT', 0],
+        ['retry-after', '-1', undefined],
+        ['retry-after', 'invalid', undefined]
+    ])('carries %s: %s through httpJson', async (header, value, delay) => {
+        jest.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        mockRequestUrl.mockResolvedValueOnce({ status: 429, text: 'busy', json: undefined, headers: { [header]: value } });
+        await expect(httpJson({ url: 'https://example.com', method: 'POST', headers: {}, signal: new AbortController().signal, timeoutMs: 60000 }))
+            .rejects.toMatchObject({ kind: 'rate-limit', retryAfterMs: delay });
+    });
+});
+
+
+it('carries Retry-After through the streaming transport', async () => {
+    const previousFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+        ok: false, status: 503, text: async () => 'busy', headers: { get: (key: string) => key === 'retry-after' ? '4' : null }
+    });
+    try {
+        await expect(httpStream({ url: 'https://example.com', headers: {}, body: {}, signal: new AbortController().signal, timeoutMs: 60000, onEvent: () => undefined }))
+            .rejects.toMatchObject({ kind: 'server', retryAfterMs: 4000 });
+    } finally {
+        global.fetch = previousFetch;
+    }
 });

@@ -90,6 +90,23 @@ function renderInto(containerEl: HTMLElement, plugin: HighlightCommentsPlugin, r
                 });
         });
 
+    new Setting(containerEl)
+        .setName(t('settings.ai.maxRetries.name'))
+        .setDesc(t('settings.ai.maxRetries.desc'))
+        .addText(text => {
+            text.inputEl.type = 'number';
+            text.inputEl.min = '0';
+            text.inputEl.step = '1';
+            text.setValue(String(ai.maxRetries))
+                .onChange(async value => {
+                    if (!value.trim()) return;
+                    const retries = Number(value);
+                    if (!Number.isSafeInteger(retries) || retries < 0) return;
+                    ai.maxRetries = retries;
+                    await plugin.saveSettings();
+                });
+        });
+
     renderStreamingSetting(containerEl, plugin);
     renderContextSettings(containerEl, plugin, refresh);
     renderPromptSettings(containerEl, plugin, refresh);
@@ -584,7 +601,7 @@ function renderProfileEditor(
         .setDesc(t('settings.ai.field.baseUrl.desc'))
         .addText(text => {
             text.inputEl.addClass('sh-ai-wide-input');
-            text.setPlaceholder('https://api.example.com/v1')
+            text.setPlaceholder(t('settings.ai.field.baseUrl.placeholder'))
                 .setValue(profile.baseUrl)
                 .onChange(async value => {
                     profile.baseUrl = value.trim();

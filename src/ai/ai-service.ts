@@ -13,7 +13,15 @@ import { redact, toAiError, type Provider } from './providers/provider';
  */
 const TEST_CONNECTION_MAX_TOKENS = 512;
 
+export interface RetryEvent {
+    /** One-based retry number. */
+    attempt: number;
+    delayMs: number;
+}
+
 export interface CompleteOptions {
+    /** Announced before backoff, so Stop remains available while waiting. */
+    onRetry?: (event: RetryEvent) => void;
     /** Defaults to the active profile. */
     profile?: AiProfile;
     signal?: AbortSignal;
@@ -33,8 +41,8 @@ export interface StreamOptions extends CompleteOptions {
      */
     onReasoning?: (text: string) => void;
     /**
-     * Called when a stream could not be started and the request is being retried
-     * without streaming, so the caller can drop whatever partial text it drew.
+     * Called before retrying a transport failure without streaming. No visible
+     * stream output has been emitted; callers can reset their waiting state.
      */
     onFallback?: () => void;
 }
@@ -126,7 +134,7 @@ export class AiService {
         if (cached) return { ...cached };
 
         try {
-            const result = await provider.complete(
+            const result = await this.withRetry(() => provider.complete(
                 {
                     profile,
                     messages,
@@ -135,7 +143,7 @@ export class AiService {
                 },
                 signal,
                 this.settings.requestTimeoutMs
-            );
+            ), signal, options);
             if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
             return this.remember(key, result);
         } catch (error) {
@@ -156,21 +164,17 @@ export class AiService {
         if (Platform.isMobile) return false;
         // A capability probe, not a request; see httpStream for why the
         // streaming path uses fetch at all.
-        if (typeof fetch !== 'function') return false;
+        if (typeof window.fetch !== 'function') return false;
 
         const target = profile ?? this.getActiveProfile();
         return target != null && this.providerFor(target).stream != null;
     }
 
     /**
-     * Streams a completion, falling back to a normal request when the stream
-     * cannot be established.
-     *
-     * The fallback is what makes streaming safe to enable by default on
-     * desktop: a proxy that rejects the preflight, a provider that does not
-     * implement SSE, or a corporate TLS interceptor all end up as one ordinary
-     * request instead of an error. An abort is never retried — the user asked
-     * for it to stop.
+     * Streams a completion with the same retry budget as complete. A network
+     * failure before visible output switches the next attempt to requestUrl,
+     * which bypasses CORS. Other transient errors retry the stream itself.
+     * Visible output, refusals and aborts never trigger another request.
      */
     async stream(messages: AiMessage[], options: StreamOptions): Promise<AiResult> {
         const profile = options.profile ?? this.getActiveProfile();
@@ -189,38 +193,86 @@ export class AiService {
             return { ...cached };
         }
 
-        if (this.canStream(profile) && provider.stream) {
+        if (!this.canStream(profile) || !provider.stream) return this.complete(messages, options);
+
+        let useStream = true;
+        let emitted = false;
+        let fallbackPending = false;
+        const request = { profile, messages, temperature: options.temperature, maxTokens: options.maxTokens };
+        const result = await this.withRetry(async () => {
+            if (!useStream) {
+                return provider.complete(request, signal, this.settings.requestTimeoutMs);
+            }
             try {
-                const result = await provider.stream(
-                    {
-                        profile,
-                        messages,
-                        temperature: options.temperature,
-                        maxTokens: options.maxTokens
+                return await provider.stream!(request, {
+                    onDelta: text => {
+                        if (text) emitted = true;
+                        options.onDelta(text);
                     },
-                    { onDelta: options.onDelta, onReasoning: options.onReasoning },
-                    signal,
-                    this.settings.requestTimeoutMs
-                );
-                if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
-                return this.remember(key, result);
+                    onReasoning: text => {
+                        // Thinking is visible too: repeating it is not safe.
+                        if (text && options.onReasoning) emitted = true;
+                        options.onReasoning?.(text);
+                    }
+                }, signal, this.settings.requestTimeoutMs);
             } catch (error) {
                 const normalized = toAiError(error);
-                // An abort and a refusal from the provider are both real
-                // answers; only a transport failure is worth retrying.
-                if (normalized.kind === 'aborted' || normalized.kind === 'auth' || normalized.kind === 'bad-request') {
-                    throw normalized;
+                // A transport failure before output may be CORS. Use the next
+                // retry for the mobile-safe transport, sharing the same budget.
+                if (!emitted && normalized.retriable && normalized.kind === 'network') {
+                    useStream = false;
+                    fallbackPending = true;
                 }
-                this.logSafeWarning('streaming failed, retrying without it', normalized);
-                options.onFallback?.();
+                throw normalized;
             }
-        }
-
-        return this.complete(messages, options);
+        }, signal, {
+            ...options,
+            onRetry: event => {
+                if (fallbackPending) {
+                    fallbackPending = false;
+                    options.onFallback?.();
+                }
+                options.onRetry?.(event);
+            }
+        }, () => !emitted);
+        return this.remember(key, result);
     }
 
-    private logSafeWarning(message: string, error: unknown): void {
-        console.warn(`Sidebar Highlights: ${message}:`, logSafe(error));
+    /** One retry budget for the entire request, including transport fallback. */
+    private async withRetry(
+        send: () => Promise<AiResult>,
+        signal: AbortSignal,
+        options: CompleteOptions,
+        canRetry: () => boolean = () => true
+    ): Promise<AiResult> {
+        const configured = this.settings.maxRetries ?? 2;
+        const maxRetries = Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 2;
+        let retries = 0;
+        for (;;) {
+            if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+            try {
+                const result = await send();
+                if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+                return result;
+            } catch (error) {
+                if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+                const normalized = toAiError(error);
+                if (!normalized.retriable || !canRetry() || retries >= maxRetries) {
+                    throw new AiError(normalized.kind, normalized.message, {
+                        status: normalized.status, detail: normalized.detail,
+                        retriable: normalized.retriable, retryAfterMs: normalized.retryAfterMs, retries
+                    });
+                }
+                const retryAfter = normalized.retryAfterMs;
+                const delayMs = Math.min(30000,
+                    retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter >= 0
+                        ? retryAfter
+                        : Math.round(1000 * 2 ** Math.min(retries, 30) * (0.5 + Math.random())));
+                options.onRetry?.({ attempt: retries + 1, delayMs });
+                await waitForRetry(delayMs, signal);
+                retries++;
+            }
+        }
     }
 
     /**
@@ -269,8 +321,8 @@ export class AiService {
 export function describeAiError(error: unknown): string {
     const aiError = toAiError(error);
     const headline = t(`ai.errors.${aiError.kind}`);
-    if (!aiError.detail) return headline;
-    return `${headline} — ${aiError.detail}`;
+    const message = aiError.detail ? `${headline} — ${aiError.detail}` : headline;
+    return aiError.retries === undefined ? message : `${message} — ${t('ai.errors.retried', { count: aiError.retries })}`;
 }
 
 /** Builds a profile pre-filled from its provider's registry entry. */
@@ -312,4 +364,24 @@ function fingerprint(text: string): string {
         hash = Math.imul(hash, 0x01000193);
     }
     return (hash >>> 0).toString(16);
+}
+
+/** Cancels backoff immediately and releases both timer and abort listener. */
+function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(new AiError('aborted', 'Request cancelled'));
+            return;
+        }
+        const onAbort = () => {
+            window.clearTimeout(timer);
+            signal.removeEventListener('abort', onAbort);
+            reject(new AiError('aborted', 'Request cancelled'));
+        };
+        const timer = window.setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+        }, delayMs);
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
 }
