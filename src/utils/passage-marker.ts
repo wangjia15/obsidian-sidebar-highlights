@@ -27,10 +27,14 @@ export interface Range {
  * or a footnote reference. A footnote *definition* spans lines and is found with
  * the footnote parser's own scanner instead of a regex.
  */
-const EXISTING_MARKUP = [
+const HIGHLIGHT_MARKUP = [
     /==[\s\S]+?==/g,
+    /<(mark|span|font)\b[^>]*>[\s\S]*?<\/\1>/gi
+] as const;
+
+const EXISTING_MARKUP = [
+    ...HIGHLIGHT_MARKUP,
     /%%[\s\S]+?%%/g,
-    /<(mark|span|font)\b[^>]*>[\s\S]*?<\/\1>/gi,
     /\[\^[A-Za-z0-9_-]+\]/g,
     /\^\[[^\]]*\]/g
 ] as const;
@@ -115,6 +119,7 @@ export function markPassages(
     passages: string[],
     options: MarkOptions = {}
 ): MarkResult {
+    const highlighted = highlightRanges(content);
     const blocked = [
         ...(options.excludedRanges ?? []),
         ...existingMarkupRanges(content),
@@ -127,7 +132,7 @@ export function markPassages(
     const alreadyMarked: string[] = [];
 
     for (const passage of passages) {
-        const outcome = findPassage(content, passage, blocked, claimed);
+        const outcome = findPassage(content, passage, blocked, claimed, highlighted);
         if (outcome === 'blocked') {
             alreadyMarked.push(passage);
             continue;
@@ -163,21 +168,22 @@ export function markPassages(
 /**
  * Where a passage sits in the note, or why it does not.
  *
- * Returns the range, `'blocked'` when the text is there but inside markup that
- * must not be touched, or null when it is not in the note at all.
+ * Returns the range, 'blocked' for an existing highlight, or null when no
+ * eligible occurrence exists (including code, metadata and comments).
  */
 function findPassage(
     content: string,
     passage: string,
     blocked: Range[],
-    claimed: Range[]
+    claimed: Range[],
+    highlighted: Range[]
 ): Range | 'blocked' | null {
     let sawBlocked = false;
 
     for (const range of passageCandidates(content, passage)) {
         if (overlapsAny(range, claimed)) continue;
         if (overlapsAny(range, blocked)) {
-            sawBlocked = true;
+            if (overlapsAny(range, highlighted)) sawBlocked = true;
             continue;
         }
         return range;
@@ -186,36 +192,56 @@ function findPassage(
     return sawBlocked ? 'blocked' : null;
 }
 
-/**
- * Every place the passage occurs, whitespace-tolerantly.
- *
- * A model reflows what it quotes — a line break becomes a space, a run of
- * spaces becomes one — so matching literally would reject passages that are
- * word for word correct. Any run of whitespace in the passage therefore matches
- * any run of whitespace in the note, and nothing else is loosened: the words
- * and the punctuation still have to be exactly what the note says.
- */
-function passageCandidates(content: string, passage: string): Range[] {
-    const pattern = whitespaceTolerantPattern(passage);
-    if (!pattern) return [];
-
+/** Matching-only normalization, with each unit mapped to original UTF-16 offsets. */
+function matchingText(text: string): { text: string; ranges: Range[] } {
+    let normalized = '';
     const ranges: Range[] = [];
-    for (const match of content.matchAll(pattern)) {
-        const start = match.index ?? 0;
-        ranges.push({ start, end: start + match[0].length });
+    for (let start = 0; start < text.length;) {
+        let end = start + 1;
+        let char = text[start];
+        const code = char.charCodeAt(0);
+        // Only fullwidth ASCII: avoid compatibility folding unrelated words.
+        if (code >= 0xff01 && code <= 0xff5e) char = String.fromCharCode(code - 0xfee0);
+        if ('「」“”„‟«»＂'.includes(char)) char = '"';
+        if ('『』‘’‚‛‹›＇'.includes(char)) char = "'";
+        if (/[-‐‑‒–—―−﹘﹣]/.test(char)) {
+            char = '-';
+            while (end < text.length && /[-‐‑‒–—―−﹘﹣－]/.test(text[end])) end++;
+        }
+        if (char === '…' || text.slice(start, start + 3) === '...' || text.slice(start, start + 3) === '．．．') {
+            char = '…';
+            if (text[start] !== '…') end = start + 3;
+        }
+        normalized += char;
+        ranges.push({ start, end });
+        start = end;
     }
-    return ranges;
+    return { text: normalized, ranges };
 }
 
-function whitespaceTolerantPattern(passage: string): RegExp | null {
-    const parts = passage.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return null;
+/** Parse each chunk separately, then deduplicate by the same matching rules. */
+export function parsePassageAnswers(answers: string[]): string[] {
+    const seen = new Set<string>();
+    return answers.flatMap(parsePassages).filter(passage => {
+        const key = matchingText(passage).text.trim().replace(/[ \t]+/g, ' ');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
 
-    // A newline inside the match would put the delimiters on different lines,
-    // which markdown does not read back as one highlight, so runs of whitespace
-    // match spaces and tabs only.
-    const source = parts.map(escapeRegex).join('[ \\t]+');
-    return new RegExp(source, 'g');
+function passageCandidates(content: string, passage: string): Range[] {
+    const original = matchingText(content);
+    const parts = matchingText(passage).text.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return [];
+    // Preserve the existing single-line whitespace rule.
+    const pattern = new RegExp(parts.map(escapeRegex).join('[ \\t]+'), 'g');
+    const ranges: Range[] = [];
+    for (const match of original.text.matchAll(pattern)) {
+        const start = match.index ?? 0;
+        ranges.push({ start: original.ranges[start].start, end: original.ranges[start + match[0].length - 1].end });
+    }
+    return ranges;
 }
 
 function escapeRegex(text: string): string {
@@ -224,6 +250,13 @@ function escapeRegex(text: string): string {
 
 function overlapsAny(range: Range, others: Range[]): boolean {
     return others.some(other => range.start < other.end && other.start < range.end);
+}
+
+/** Only actual highlights count as already highlighted in completion notices. */
+function highlightRanges(content: string): Range[] {
+    return HIGHLIGHT_MARKUP.flatMap(pattern =>
+        [...content.matchAll(pattern)].map(match => ({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }))
+    );
 }
 
 /** Ranges of the note already carrying markup a new highlight must stay out of. */

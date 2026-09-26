@@ -279,7 +279,7 @@ const BUILTIN_PROMPT_DEFS: BuiltinPromptDef[] = [
         // matched back against the note, so anything but bare quotes fails to
         // find its passage. See utils/passage-marker.ts.
         system: 'You select passages to highlight. You quote the document verbatim and output nothing else.',
-        template: 'Pick out the passages in the note below that are most worth highlighting — the claims, definitions and findings a reader would want to come back to.\n\nRules:\n- Copy each passage **exactly** as it appears, character for character. Do not paraphrase, translate, correct or re-punctuate it.\n- One passage per line, with no numbering, no bullets, no quotation marks and no commentary.\n- Each passage must be a continuous run of text from a single line of the note.\n- Prefer a whole sentence or clause; never a single word.\n- At most 10 passages. Fewer is better than padding.\n\n# {{noteTitle}}\n\n{{note}}',
+        template: 'Pick out the passages in the note below that are most worth highlighting — the claims, definitions and findings a reader would want to come back to.\n\nRules:\n- Copy each passage **exactly** as it appears, character for character. Do not paraphrase, translate, correct or re-punctuate it. If you cannot quote a passage verbatim, skip it; do not rewrite it.\n- One passage per line, with no numbering, no bullets, no quotation marks and no commentary.\n- Each passage must be a continuous run of text from a single line of the note.\n- Prefer a whole sentence or clause; never a single word.\n- At most 10 passages. Fewer is better than padding.\n\n# {{noteTitle}}\n\n{{note}}',
         outputTarget: 'highlights'
     },
     {

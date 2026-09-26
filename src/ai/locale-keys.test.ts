@@ -1,6 +1,7 @@
 import en from '../../locale/en.json';
 import zhCn from '../../locale/zh-cn.json';
 import { i18n, t } from '../i18n';
+import { extractionCompletionMessage } from './extraction-notice';
 import { PROVIDERS, PROVIDER_ORDER } from './registry';
 import type { AiErrorKind } from './types';
 
@@ -119,4 +120,34 @@ describe('locale parity', () => {
 
         expect([...empties(en, 'en'), ...empties(zhCn, 'zh-cn')]).toEqual([]);
     });
+});
+
+it.each(['en', 'zh-cn'])('interpolates extraction completion counts in %s', async locale => {
+    const { moment } = await import('obsidian');
+    const previous = moment.locale();
+    jest.spyOn(moment, 'locale').mockReturnValue(locale);
+    await i18n.init();
+    const summary = t('ai.note.markedSummary', { marked: 2, already: 3, missed: 4 });
+    expect(summary).toBe(locale === 'en'
+        ? 'New highlights 2 / Already highlighted 3 / Not found 4'
+        : '新标记 2 / 已被高亮 3 / 找不到 4');
+    jest.spyOn(moment, 'locale').mockReturnValue(previous);
+    await i18n.init();
+});
+
+it.each(['en', 'zh-cn'])('adds retry advice after zero-mark counts in %s', async locale => {
+    const { moment } = await import('obsidian');
+    const spy = jest.spyOn(moment, 'locale').mockReturnValue(locale);
+    try {
+        await i18n.init();
+        const counts = { marked: 0, already: 1, missed: 2 };
+        expect(extractionCompletionMessage(counts)).toBe(locale === 'en'
+            ? 'New highlights 0 / Already highlighted 1 / Not found 2. The model may have paraphrased instead of quoting — try again, or ask it to quote exactly.'
+            : '新标记 0 / 已被高亮 1 / 找不到 2。模型可能做了转述而非原文摘录——请重试，或要求它严格照抄原文。');
+        expect(extractionCompletionMessage({ ...counts, marked: 1 }))
+            .toBe(t('ai.note.markedSummary', { ...counts, marked: 1 }));
+    } finally {
+        spy.mockRestore();
+        await i18n.init();
+    }
 });

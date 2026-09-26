@@ -404,3 +404,10 @@ describe('variable list', () => {
         }
     });
 });
+
+it('updates untouched extraction templates while preserving edited fields', () => {
+    const extract = builtinPrompts().find(p => p.outputTarget === 'highlights')!;
+    expect(extract.template).toContain('If you cannot quote a passage verbatim, skip it; do not rewrite it.');
+    expect(resolvePrompts([{ id: extract.id, name: 'My extract' }]).find(p => p.id === extract.id)?.template).toBe(extract.template);
+    expect(resolvePrompts([{ id: extract.id, template: 'My custom template' }]).find(p => p.id === extract.id)?.template).toBe('My custom template');
+});

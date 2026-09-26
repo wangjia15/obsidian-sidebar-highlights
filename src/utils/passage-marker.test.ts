@@ -1,4 +1,4 @@
-import { existingMarkupRanges, markPassages, parsePassages } from './passage-marker';
+import { existingMarkupRanges, markPassages, parsePassages, parsePassageAnswers } from './passage-marker';
 
 describe('parsePassages', () => {
     it('takes one passage per line', () => {
@@ -163,4 +163,60 @@ describe('existingMarkupRanges', () => {
     it('finds nothing in plain prose', () => {
         expect(existingMarkupRanges('just words here')).toEqual([]);
     });
+});
+
+describe('punctuation-tolerant passage matching', () => {
+    it.each([
+        ['他说「你好」之后', '他说"你好"之后'],
+        ['他说『你好』之后', "他说'你好'之后"],
+        ['say “hello” and «bye»', 'say "hello" and "bye"'],
+        ['say ‘hello’ and ‹bye›', "say 'hello' and 'bye'"],
+        ['first —— second – third ‐ fourth ‑ fifth − sixth ― end', 'first - second - third - fourth - fifth - sixth - end'],
+        ['Ａｚ０９！＂＃＄％＆＇（）＊＋，－．／：；＜＝＞？＠［\\］＾＿｀｛｜｝～', 'Az09!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'],
+        ['wait…then...', 'wait...then…'],
+        ['他说「Ａ１」  ——\t等待…', '他说"A1" - 等待...']
+    ])('wraps original characters for %s', (original, passage) => {
+        const result = markPassages('before ' + original + ' after', [passage]);
+        expect(result.content).toBe('before ==' + original + '== after');
+        expect(result.marked).toEqual([original]);
+        expect(markPassages(passage, [original]).content).toBe('==' + passage + '==');
+        expect(result.content.replace(/==/g, '')).toBe('before ' + original + ' after');
+    });
+
+    it('chooses the first eligible repeated occurrence', () => {
+        expect(markPassages('==他说「你好」之后== 他说「你好」之后 他说「你好」之后', ['他说"你好"之后']).content)
+            .toBe('==他说「你好」之后== ==他说「你好」之后== 他说「你好」之后');
+    });
+
+    it.each(['==%s==', '<mark>%s</mark>', '%%%% %s %%%%', 'body ^[%s]', 'body\n[^1]: %s', '---\ntitle: %s\n---'])('preserves protected markup %s', wrapper => {
+        const content = wrapper.replace('%s', '他说「你好」之后');
+        expect(markPassages(content, ['他说"你好"之后']).content).toBe(content);
+    });
+
+    it('preserves code ranges and continues searching outside them', () => {
+        const code = '\x60\x60\x60\n他说「你好」之后\n\x60\x60\x60';
+        const result = markPassages(code + '\n他说「你好」之后', ['他说"你好"之后'], { excludedRanges: [{ start: 0, end: code.length }] });
+        expect(result.content).toBe(code + '\n==他说「你好」之后==');
+    });
+
+    it('deduplicates parsed chunk answers before marking', () => {
+        const passages = parsePassageAnswers(['- 他说「你好」  之后', '1. 他说"你好" 之后\nother passage']);
+        expect(passages).toEqual(['他说「你好」  之后', 'other passage']);
+        expect(markPassages('他说「你好」  之后 他说「你好」  之后', passages).marked).toHaveLength(1);
+    });
+
+    it('reports newly marked, already highlighted and missing passages independently', () => {
+        const result = markPassages('新的「段落」 ==已有「段落」==', ['新的"段落"', '已有"段落"', '不存在的段落']);
+        expect([result.marked.length, result.alreadyMarked.length, result.unmatched.length]).toEqual([1, 1, 1]);
+    });
+});
+
+it('does not describe comments or code as already highlighted', () => {
+    const content = '%% protected comment %% code passage ==existing highlight==';
+    const result = markPassages(content, ['protected comment', 'code passage', 'existing highlight'], {
+        excludedRanges: [{ start: content.indexOf('code passage'), end: content.indexOf(' ==') }]
+    });
+    expect(result.content).toBe(content);
+    expect(result.alreadyMarked).toEqual(['existing highlight']);
+    expect(result.unmatched).toEqual(['protected comment', 'code passage']);
 });
