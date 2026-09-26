@@ -549,6 +549,7 @@
       "appended": "Written into the note under \"{{heading}}\"",
       "created": "Created {{path}}",
       "marked": "Highlighted {{marked}} passages",
+      "markedSummary": "New highlights {{marked}} / Already highlighted {{already}} / Not found {{missed}}",
       "markedSome": "Highlighted {{marked}} passages. {{missed}} could not be found in the note word for word and were skipped.",
       "markedNone": "None of the {{total}} passages matched the note word for word, so nothing was highlighted. The model paraphrased instead of quoting — try again, or ask it to quote exactly.",
       "noPassages": "The model returned no passages to highlight."

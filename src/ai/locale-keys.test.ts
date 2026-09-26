@@ -115,3 +115,17 @@ describe('locale parity', () => {
         expect([...empties(en, 'en'), ...empties(zhCn, 'zh-cn')]).toEqual([]);
     });
 });
+
+
+it.each(['en', 'zh-cn'])('interpolates extraction completion counts in %s', async locale => {
+    const { moment } = await import('obsidian');
+    const previous = moment.locale();
+    jest.spyOn(moment, 'locale').mockReturnValue(locale);
+    await i18n.init();
+    const summary = t('ai.note.markedSummary', { marked: 2, already: 3, missed: 4 });
+    expect(summary).toBe(locale === 'en'
+        ? 'New highlights 2 / Already highlighted 3 / Not found 4'
+        : '新标记 2 / 已被高亮 3 / 找不到 4');
+    jest.spyOn(moment, 'locale').mockReturnValue(previous);
+    await i18n.init();
+});

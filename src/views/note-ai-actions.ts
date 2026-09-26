@@ -7,7 +7,7 @@ import { prepareNotePromptRun, type PreparedNoteRun } from '../ai/prompt-runner'
 import { AiConfirmSendModal } from '../modals/ai-confirm-send-modal';
 import { openAiResultView } from './ai-result-view';
 import type { AiResult, PromptOutputTarget, PromptPreset } from '../ai/types';
-import { markPassages, parsePassages } from '../utils/passage-marker';
+import { markPassages, parsePassageAnswers } from '../utils/passage-marker';
 import { replaceSection } from '../utils/note-section';
 import { minimalEdit } from '../utils/text-edit';
 import { sanitizeFileName } from '../utils/excalidraw-mindmap';
@@ -184,7 +184,7 @@ async function runNoteWrite(
     let answered = false;
 
     try {
-        const { combined: answer, parts } = await runAiMessageBatches(
+        const { combined: answer, parts, answers } = await runAiMessageBatches(
             plugin.aiService,
             prepared.messageBatches ?? [prepared.messages],
             {
@@ -209,7 +209,7 @@ async function runNoteWrite(
         notice.hide();
 
         if (prompt.outputTarget === 'highlights') {
-            await markAnswerPassages(plugin, file, answer.text);
+            await markAnswerPassages(plugin, file, answers.map(part => part.text));
         } else {
             await appendAnswerToNote(plugin, prompt, file, answer.text);
         }
@@ -384,9 +384,9 @@ async function appendAnswerToNote(
 async function markAnswerPassages(
     plugin: HighlightCommentsPlugin,
     file: TFile,
-    answer: string
+    answers: string[]
 ): Promise<void> {
-    const passages = parsePassages(answer);
+    const passages = parsePassageAnswers(answers);
     if (passages.length === 0) {
         new Notice(t('ai.note.noPassages'));
         return;
@@ -394,6 +394,7 @@ async function markAnswerPassages(
 
     let marked = 0;
     let missed = 0;
+    let already = 0;
     try {
         await rewriteNote(plugin, file, content => {
             const result = markPassages(content, passages, {
@@ -404,6 +405,7 @@ async function markAnswerPassages(
             });
             marked = result.marked.length;
             missed = result.unmatched.length;
+            already = result.alreadyMarked.length;
             return result.content;
         });
     } catch (error) {
@@ -412,17 +414,8 @@ async function markAnswerPassages(
         return;
     }
 
-    if (marked === 0) {
-        new Notice(t('ai.note.markedNone', { total: passages.length }), 8000);
-        return;
-    }
-
-    new Notice(
-        missed > 0
-            ? t('ai.note.markedSome', { marked, missed })
-            : t('ai.note.marked', { marked }),
-        missed > 0 ? 8000 : 4000
-    );
+    new Notice(t('ai.note.markedSummary', { marked, already, missed }), missed > 0 ? 8000 : 4000);
+    if (marked === 0) return;
 
     // The write went through the vault, so the sidebar learns about it from the
     // modify event — but a rescan here means the new highlights are listed by
