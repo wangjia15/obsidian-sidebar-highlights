@@ -6,6 +6,7 @@ import { cloneAiSettings, DEFAULT_AI_SETTINGS } from './types';
 import type { AiProfile, PromptPreset } from './types';
 import { collectContextSource, preparePromptRun, prepareNotePromptRun, uiLanguageName } from './prompt-runner';
 import { loadImageForAi } from './image-loader';
+import { builtinPrompts, resolvePrompts } from './prompt-library';
 
 jest.mock('./image-loader', () => ({
     loadImageForAi: jest.fn(async () => ({ mimeType: 'image/png', data: 'AAAA', name: 'chart.png' }))
@@ -278,4 +279,62 @@ it('prepares complete chapters and an oversized atomic block with accurate count
     });
     expect(run.payloadChars).toBe(run.messageBatches?.flat().reduce((sum, message) => sum + message.content.length, 0));
     expect(run.mergeMessages?.(['one', 'two', 'three']).map(message => message.content).join('\n')).toContain('Partial result 3 of 3');
+});
+
+describe('outline of a long note', () => {
+    const outline = () => builtinPrompts().find(prompt => prompt.id === 'note-outline') as PromptPreset;
+
+    function outlinePlugin(note: string) {
+        const { plugin, cachedRead } = makePlugin({ noteCharLimit: 500 });
+        cachedRead.mockResolvedValue(note);
+        plugin.highlights = new Map();
+        const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
+        return { plugin, file };
+    }
+
+    it('folds the parts\' outlines with one merge request that drops repeated headings and keeps document order', async () => {
+        const { plugin, file } = outlinePlugin(`# One\n\n${'a'.repeat(480)}\n\n# Two\n\n${'b'.repeat(480)}`);
+        const run = await prepareNotePromptRun(plugin, outline(), file);
+
+        expect(run.chunkCount).toBeGreaterThan(1);
+        expect(run.messageBatches).toHaveLength(run.chunkCount);
+        const merge = run.mergeMessages?.(['- One\n  - point a', '- One\n  - point a2\n- Two']) ?? [];
+        const request = merge.map(message => message.content).join('\n');
+        expect(request).toContain('outline of the note');
+        expect(request).toContain('Partial result 2 of 2');
+        expect(request).toContain('- Two');
+        expect(request).toMatch(/same (section )?heading.*once/i);
+        expect(request).toMatch(/order.*document/i);
+        expect(request).not.toContain('aaaa');
+    });
+
+    it('sends a short note as one request with no merge', async () => {
+        const { plugin, file } = outlinePlugin('# One\n\nA short note.');
+        const run = await prepareNotePromptRun(plugin, outline(), file);
+
+        expect(run.chunkCount).toBe(1);
+        expect(run.messageBatches).toHaveLength(1);
+        expect(run.mergeMessages).toBeUndefined();
+    });
+
+    it('keeps merging when the user has edited the outline template', async () => {
+        const { plugin, file } = outlinePlugin(`# One\n\n${'a'.repeat(480)}\n\n# Two\n\n${'b'.repeat(480)}`);
+        const edited = resolvePrompts([{ id: 'note-outline', template: 'My outline:\n\n{{note}}' }])
+            .find(prompt => prompt.id === 'note-outline') as PromptPreset;
+        const run = await prepareNotePromptRun(plugin, edited, file);
+
+        const request = run.mergeMessages?.(['x', 'y']).map(message => message.content).join('\n') ?? '';
+        expect(request).toContain('My outline:');
+        expect(request).toMatch(/same (section )?heading.*once/i);
+    });
+
+    it('leaves other merging prompts without the outline instruction', async () => {
+        const { plugin, file } = outlinePlugin(`# One\n\n${'a'.repeat(480)}\n\n# Two\n\n${'b'.repeat(480)}`);
+        const summary = builtinPrompts().find(prompt => prompt.id === 'note-summary') as PromptPreset;
+        const run = await prepareNotePromptRun(plugin, summary, file);
+
+        const request = run.mergeMessages?.(['x', 'y']).map(message => message.content).join('\n') ?? '';
+        expect(request).toContain('Partial result 2 of 2');
+        expect(request).not.toMatch(/same (section )?heading.*once/i);
+    });
 });

@@ -165,10 +165,16 @@ export interface PromptPreset {
     /**
      * Whole-note prompts only: when a long note is split into parts, fold the
      * partial answers into one with a final request instead of joining them.
-     * Right for syntheses (a summary, a review), wrong for output that follows
-     * the document (an outline, extracted passages).
+     * Right for syntheses (a summary, a review) and for an outline, whose parts
+     * repeat the headings a chapter spans; wrong for extracted passages, which
+     * are matched back against the note.
      */
     mergeParts?: boolean;
+    /**
+     * Builtins only: what the merge request asks beyond the generic fold, for
+     * a prompt whose parts overlap in a known way (an outline's headings).
+     */
+    mergeInstruction?: string;
 }
 
 /**

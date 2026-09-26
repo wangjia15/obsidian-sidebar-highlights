@@ -296,7 +296,7 @@ function buildMergeMessages(
     if (system) messages.push({ role: 'system', content: system });
     messages.push({
         role: 'user',
-        content: `A long document was processed in ${partTexts.length} consecutive parts with the task below, producing one partial result per part. Merge them into a single result that completes the task as if the whole document had been read at once: follow the task's required structure exactly, remove repetition, reconcile overlaps, and keep specific numbers, names and terms. Do not mention the parts.\n\n=== Original task ===\n${instructions}\n\n=== Partial results ===\n${parts}`
+        content: `A long document was processed in ${partTexts.length} consecutive parts with the task below, producing one partial result per part. Merge them into a single result that completes the task as if the whole document had been read at once: follow the task's required structure exactly, remove repetition, reconcile overlaps, and keep specific numbers, names and terms. Do not mention the parts.${prompt.mergeInstruction ? ` ${prompt.mergeInstruction}` : ''}\n\n=== Original task ===\n${instructions}\n\n=== Partial results ===\n${parts}`
     });
     if (language) applyOutputLanguage(messages, language);
     return messages;

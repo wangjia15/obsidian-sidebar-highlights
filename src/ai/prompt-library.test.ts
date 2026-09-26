@@ -128,9 +128,9 @@ describe('builtin prompts', () => {
         }
     });
 
-    it('merges the parts of a long note only for synthesis prompts', () => {
+    it('merges the parts of a long note for syntheses and the outline', () => {
         const merged = builtinPrompts().filter(prompt => prompt.mergeParts).map(prompt => prompt.id);
-        expect(merged).toEqual(['note-summary', 'paper-card', 'paper-review', 'highlight-review', 'reproduce', 'related-work']);
+        expect(merged).toEqual(['note-summary', 'paper-card', 'paper-review', 'highlight-review', 'reproduce', 'related-work', 'note-outline']);
         expect(builtinPrompts().every(prompt => !prompt.mergeParts || prompt.scope === 'note')).toBe(true);
     });
 
