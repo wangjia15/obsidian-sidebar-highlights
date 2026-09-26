@@ -5,7 +5,7 @@ All notable changes to the Sidebar Highlights plugin will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.43.0] - 2026-09-26
 
 ### Added
 - **A color on the right-click Create highlight.** The editor's context menu entry now opens onto the palette, so a highlight can be given its color as it is made rather than recolored afterwards. Picking **Default color** keeps plain `==text==`.
