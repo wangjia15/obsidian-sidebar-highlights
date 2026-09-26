@@ -41,8 +41,8 @@ export interface StreamOptions extends CompleteOptions {
      */
     onReasoning?: (text: string) => void;
     /**
-     * Called before retrying a transport failure without streaming. No visible
-     * stream output has been emitted; callers can reset their waiting state.
+     * Called before the independent non-streaming fallback. No visible stream
+     * output has been emitted; this transport switch does not consume a retry.
      */
     onFallback?: () => void;
 }
@@ -171,10 +171,10 @@ export class AiService {
     }
 
     /**
-     * Streams a completion with the same retry budget as complete. A network
-     * failure before visible output switches the next attempt to requestUrl,
-     * which bypasses CORS. Other transient errors retry the stream itself.
-     * Visible output, refusals and aborts never trigger another request.
+     * Tries streaming once, then falls back before any visible output unless
+     * the error is a refusal or cancellation. The transport fallback is an
+     * independent safety net, even with retries disabled; complete owns its
+     * full retry budget. Visible output never triggers another request.
      */
     async stream(messages: AiMessage[], options: StreamOptions): Promise<AiResult> {
         const profile = options.profile ?? this.getActiveProfile();
@@ -195,55 +195,40 @@ export class AiService {
 
         if (!this.canStream(profile) || !provider.stream) return this.complete(messages, options);
 
-        let useStream = true;
         let emitted = false;
-        let fallbackPending = false;
-        const request = { profile, messages, temperature: options.temperature, maxTokens: options.maxTokens };
-        const result = await this.withRetry(async () => {
-            if (!useStream) {
-                return provider.complete(request, signal, this.settings.requestTimeoutMs);
-            }
-            try {
-                return await provider.stream!(request, {
-                    onDelta: text => {
-                        if (text) emitted = true;
-                        options.onDelta(text);
-                    },
-                    onReasoning: text => {
-                        // Thinking is visible too: repeating it is not safe.
-                        if (text && options.onReasoning) emitted = true;
-                        options.onReasoning?.(text);
-                    }
-                }, signal, this.settings.requestTimeoutMs);
-            } catch (error) {
-                const normalized = toAiError(error);
-                // A transport failure before output may be CORS. Use the next
-                // retry for the mobile-safe transport, sharing the same budget.
-                if (!emitted && normalized.retriable && normalized.kind === 'network') {
-                    useStream = false;
-                    fallbackPending = true;
+        try {
+            const result = await provider.stream({
+                profile, messages, temperature: options.temperature, maxTokens: options.maxTokens
+            }, {
+                onDelta: text => {
+                    if (text) emitted = true;
+                    options.onDelta(text);
+                },
+                onReasoning: text => {
+                    // Thinking is visible too: repeating it is not safe.
+                    if (text && options.onReasoning) emitted = true;
+                    options.onReasoning?.(text);
                 }
+            }, signal, this.settings.requestTimeoutMs);
+            if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+            return this.remember(key, result);
+        } catch (error) {
+            if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
+            const normalized = toAiError(error);
+            if (emitted || normalized.kind === 'auth' || normalized.kind === 'bad-request'
+                || normalized.kind === 'quota' || normalized.kind === 'aborted') {
                 throw normalized;
             }
-        }, signal, {
-            ...options,
-            onRetry: event => {
-                if (fallbackPending) {
-                    fallbackPending = false;
-                    options.onFallback?.();
-                }
-                options.onRetry?.(event);
-            }
-        }, () => !emitted);
-        return this.remember(key, result);
+            options.onFallback?.();
+        }
+        return this.complete(messages, { ...options, profile });
     }
 
-    /** One retry budget for the entire request, including transport fallback. */
+    /** Retrying a non-streaming request; transport fallback is independent. */
     private async withRetry(
         send: () => Promise<AiResult>,
         signal: AbortSignal,
-        options: CompleteOptions,
-        canRetry: () => boolean = () => true
+        options: CompleteOptions
     ): Promise<AiResult> {
         const configured = this.settings.maxRetries ?? 2;
         const maxRetries = Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 2;
@@ -257,10 +242,11 @@ export class AiService {
             } catch (error) {
                 if (signal.aborted) throw new AiError('aborted', 'Request cancelled');
                 const normalized = toAiError(error);
-                if (!normalized.retriable || !canRetry() || retries >= maxRetries) {
+                if (!normalized.retriable || retries >= maxRetries) {
                     throw new AiError(normalized.kind, normalized.message, {
                         status: normalized.status, detail: normalized.detail,
-                        retriable: normalized.retriable, retryAfterMs: normalized.retryAfterMs, retries
+                        retriable: normalized.retriable, retryAfterMs: normalized.retryAfterMs,
+                        retries: retries > 0 ? retries : undefined
                     });
                 }
                 const retryAfter = normalized.retryAfterMs;
@@ -322,7 +308,7 @@ export function describeAiError(error: unknown): string {
     const aiError = toAiError(error);
     const headline = t(`ai.errors.${aiError.kind}`);
     const message = aiError.detail ? `${headline} — ${aiError.detail}` : headline;
-    return aiError.retries === undefined ? message : `${message} — ${t('ai.errors.retried', { count: aiError.retries })}`;
+    return aiError.kind === 'aborted' || !aiError.retries ? message : `${message} — ${t('ai.errors.retried', { count: aiError.retries })}`;
 }
 
 /** Builds a profile pre-filled from its provider's registry entry. */

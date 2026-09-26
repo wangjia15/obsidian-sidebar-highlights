@@ -103,7 +103,7 @@ export class AiError extends Error {
     readonly retriable: boolean;
     /** Parsed Retry-After delay; the service caps it before waiting. */
     readonly retryAfterMs?: number;
-    /** Retries actually dispatched, supplied only by the service. */
+    /** Dispatched retries on a final failure; absent when none were made. */
     readonly retries?: number;
     /** Provider-supplied detail, already stripped of anything key-shaped. */
     readonly detail?: string;
