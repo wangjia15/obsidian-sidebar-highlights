@@ -11,8 +11,11 @@ import {
 } from './context-builder';
 import { buildMessages, type InterpolationResult } from './prompt-library';
 import { providerLabel } from './registry';
-import type { AiMessage, AiProfile, PromptPreset } from './types';
+import type { AiMessage, AiProfile, AiSettings, PromptPreset } from './types';
 import { splitNoteIntoChunks } from './note-chunks';
+import { applyOutputLanguage, promptFixesItsOwnLanguage, resolveOutputLanguage } from './output-language';
+import { loadImageForAi } from './image-loader';
+import { imageDisplayName, parseImageEmbed } from '../utils/image-embed';
 
 export interface RunOptions {
     /** Ad-hoc text the user typed when launching the prompt. */
@@ -29,6 +32,8 @@ export interface PreparedRun {
     messages: AiMessage[];
     /** Several requests when a whole document exceeds the per-request limit. */
     messageBatches?: AiMessage[][];
+    /** Builds the request that folds several parts' answers into one; see PromptPreset.mergeParts. */
+    mergeMessages?: (partTexts: string[]) => AiMessage[];
     interpolation: InterpolationResult;
     /** Characters that will leave the machine, for the pre-send confirmation. */
     payloadChars: number;
@@ -131,19 +136,28 @@ export async function preparePromptRun(
     }
 
     const source = await collectContextSource(plugin, highlight);
+
+    // An image highlight sends the picture, not its embed markup: the model
+    // is told the image's name in place of the text, and gets the image
+    // itself attached to the request.
+    const embed = parseImageEmbed(highlight.text);
+    const image = embed ? await loadImageForAi(plugin.app, embed, highlight.filePath) : undefined;
+    if (embed) source.highlightText = `[image: ${imageDisplayName(embed)}]`;
+
     const variables = buildVariables(source, settings, {
         input: options.input,
         targetLanguage: options.targetLanguage,
         fallbackLanguage: uiLanguageName(i18n.getLocale())
     });
 
-    const { messages, interpolation } = buildMessages(prompt, variables);
-    const language = options.targetLanguage?.trim() || settings.defaultTargetLanguage.trim();
-    if (language && prompt.outputTarget !== 'highlights') {
-        const instruction = `Output language: ${language}. This overrides any instruction to answer in the source language. Preserve verbatim quotations and code when needed.`;
-        const system = messages.find(message => message.role === 'system');
-        if (system) system.content += `\n\n${instruction}`;
-        else messages.unshift({ role: 'system', content: instruction });
+    const { messages, interpolation } = buildMessages(prompt, variables) as { messages: AiMessage[]; interpolation: InterpolationResult };
+    const language = resolveOutputLanguage(settings, uiLanguageName(i18n.getLocale()), options.targetLanguage);
+    if (language && !promptFixesItsOwnLanguage(prompt)) {
+        applyOutputLanguage(messages, language);
+    }
+    if (image) {
+        const user = messages.find(message => message.role === 'user');
+        if (user) user.images = [image];
     }
 
 
@@ -189,7 +203,9 @@ export async function prepareNotePromptRun(
     const chunkLimit = Math.max(500, settings.noteCharLimit);
     const chunkSettings = { ...settings, noteCharLimit: chunkLimit };
     const chunks = splitNoteIntoChunks(source.noteContent, chunkLimit);
-    const language = options.targetLanguage?.trim() || settings.defaultTargetLanguage.trim();
+    const language = promptFixesItsOwnLanguage(prompt)
+        ? undefined
+        : resolveOutputLanguage(settings, uiLanguageName(i18n.getLocale()), options.targetLanguage);
     let interpolation: InterpolationResult | undefined;
     const messageBatches = chunks.map((noteContent, index) => {
         const variables = buildNoteVariables({ ...source, noteContent }, chunkSettings, {
@@ -197,15 +213,8 @@ export async function prepareNotePromptRun(
             targetLanguage: options.targetLanguage,
             fallbackLanguage: uiLanguageName(i18n.getLocale())
         });
-        const built = buildMessages(prompt, variables);
+        const built = buildMessages(prompt, variables) as { messages: AiMessage[]; interpolation: InterpolationResult };
         interpolation ??= built.interpolation;
-
-        if (language && prompt.outputTarget !== 'highlights') {
-            appendSystemInstruction(
-                built.messages,
-                `Output language: ${language}. This overrides any instruction to answer in the source language. Preserve verbatim quotations and code when needed.`
-            );
-        }
         if (prompt.outputTarget === 'new-markdown') {
             appendSystemInstruction(built.messages, 'Output valid Markdown without wrapping it in a Markdown code fence.');
         } else if (prompt.outputTarget === 'new-html') {
@@ -217,15 +226,22 @@ export async function prepareNotePromptRun(
                 `The source document is split into ${chunks.length} parts. This request contains part ${index + 1}. Process this part in document order, preserve continuity, and do not mention the split.`
             );
         }
+        // Last, so the reminder it adds is the final line of the request.
+        if (language) applyOutputLanguage(built.messages, language);
         return built.messages;
     });
     const messages = messageBatches[0];
+
+    const mergeMessages = prompt.mergeParts && chunks.length > 1
+        ? (partTexts: string[]) => buildMergeMessages(prompt, source, chunkSettings, options, language, partTexts)
+        : undefined;
 
     return {
         prompt,
         profile,
         messages,
         messageBatches,
+        mergeMessages,
         interpolation: interpolation ?? { text: '', unknown: [], missing: [] },
         payloadChars: messageBatches.reduce((sum, batch) => sum + payloadSize(batch), 0),
         destination: {
@@ -242,4 +258,42 @@ function appendSystemInstruction(messages: AiMessage[], instruction: string): vo
     const system = messages.find(message => message.role === 'system');
     if (system) system.content += `\n\n${instruction}`;
     else messages.unshift({ role: 'system', content: instruction });
+}
+
+/**
+ * The request that folds a split document's partial answers into one.
+ *
+ * It restates the original task — with the document itself left out, since
+ * not fitting is why it was split — so the merged answer keeps the shape the
+ * prompt asked for rather than the shape of a summary of summaries.
+ */
+function buildMergeMessages(
+    prompt: PromptPreset,
+    source: NoteContextSource,
+    settings: AiSettings,
+    options: RunOptions,
+    language: string | undefined,
+    partTexts: string[]
+): AiMessage[] {
+    const variables = buildNoteVariables({ ...source, noteContent: '' }, settings, {
+        input: options.input,
+        targetLanguage: options.targetLanguage,
+        fallbackLanguage: uiLanguageName(i18n.getLocale())
+    });
+    const task = buildMessages(prompt, { ...variables, note: '[the document, supplied in parts]' }).messages;
+    const system = task.find(message => message.role === 'system')?.content;
+    const instructions = task.find(message => message.role === 'user')?.content ?? '';
+
+    const parts = partTexts
+        .map((text, index) => `--- Partial result ${index + 1} of ${partTexts.length} ---\n${text}`)
+        .join('\n\n');
+
+    const messages: AiMessage[] = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({
+        role: 'user',
+        content: `A long document was processed in ${partTexts.length} consecutive parts with the task below, producing one partial result per part. Merge them into a single result that completes the task as if the whole document had been read at once: follow the task's required structure exactly, remove repetition, reconcile overlaps, and keep specific numbers, names and terms. Do not mention the parts.\n\n=== Original task ===\n${instructions}\n\n=== Partial results ===\n${parts}`
+    });
+    if (language) applyOutputLanguage(messages, language);
+    return messages;
 }

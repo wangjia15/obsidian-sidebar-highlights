@@ -49,6 +49,17 @@ export class AiConfirmSendModal extends Modal {
             t('modals.aiConfirm.payload'),
             t('modals.aiConfirm.payloadValue', { chars: this.run.payloadChars })
         );
+        // An image leaves the machine too, and is easy to forget next to a
+        // character count, so it gets a row of its own.
+        const images = this.run.messages.flatMap(message => message.images ?? []);
+        if (images.length > 0) {
+            const kb = Math.round(images.reduce((sum, image) => sum + image.data.length * 0.75, 0) / 1024);
+            this.addFact(
+                facts,
+                t('modals.aiConfirm.images'),
+                t('modals.aiConfirm.imagesValue', { names: images.map(image => image.name ?? '?').join(', '), kb })
+            );
+        }
         // Only worth a row when it is more than the one request every send is.
         const requests = this.run.messageBatches?.length ?? 1;
         if (requests > 1) {

@@ -1,6 +1,6 @@
 import { rearrangeMindmap } from './src/utils/mindmap-builder';
 // main.ts
-import { App, Editor, MarkdownFileInfo, MarkdownView, Menu, MenuItem, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, ColorComponent, normalizePath } from 'obsidian';
+import { App, Editor, MarkdownFileInfo, MarkdownView, Menu, MenuItem, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, ColorComponent, normalizePath, setIcon } from 'obsidian';
 import { HighlightsSidebarView } from './src/views/sidebar-view';
 import { AiResultView, VIEW_TYPE_AI_RESULT } from './src/views/ai-result-view';
 import { InlineFootnoteManager } from './src/managers/inline-footnote-manager';
@@ -27,9 +27,11 @@ import { i18n, t } from './src/i18n';
 import { AiService } from './src/ai/ai-service';
 import { DEFAULT_AI_SETTINGS, addUsage, cloneAiSettings, usageMonth, type AiResult, type AiSettings } from './src/ai/types';
 import { renderAiSettings } from './src/settings/ai-settings-section';
-import { enabledPrompts } from './src/ai/prompt-library';
+import { enabledPrompts, isImageOnlyPrompt } from './src/ai/prompt-library';
+import { findImageEmbedAt, isImageHighlightText } from './src/utils/image-embed';
 import { addAiMenuItems, aiAvailable, runPromptOnHighlight, runPromptOnHighlights } from './src/views/ai-actions';
 import { runNotePrompt } from './src/views/note-ai-actions';
+import { registerImageContextMenu } from './src/views/image-menu';
 
 export interface Highlight {
     id: string;
@@ -400,6 +402,16 @@ export default class HighlightCommentsPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'highlight-image-at-cursor',
+            name: t('commands.highlightImage'),
+            editorCheckCallback: (checking: boolean, editor: Editor) => {
+                if (!this.findImageAtCursor(editor)) return false;
+                if (!checking) void this.highlightImageAtCursor(editor);
+                return true;
+            }
+        });
+
+        this.addCommand({
             id: 'open-highlights-sidebar',
             name: t('commands.toggle'),
             callback: () => {
@@ -444,6 +456,11 @@ export default class HighlightCommentsPlugin extends Plugin {
             this.app.workspace.on('editor-menu', (menu, editor, view) => {
                 if (editor.getSelection()) {
                     this.addCreateHighlightMenuItems(menu, editor);
+                } else if (this.findImageAtCursor(editor)) {
+                    menu.addItem(item => item
+                        .setTitle(t('contextMenu.highlightImage'))
+                        .setIcon('image')
+                        .onClick(() => { void this.highlightImageAtCursor(editor); }));
                 }
                 this.addEditorAiMenuItems(menu, editor, view);
             })
@@ -470,6 +487,8 @@ export default class HighlightCommentsPlugin extends Plugin {
             })
         );
 
+
+        registerImageContextMenu(this);
 
         this.addSettingTab(new HighlightSettingTab(this.app, this));
         this.updateCustomColorStyles();
@@ -617,6 +636,12 @@ export default class HighlightCommentsPlugin extends Plugin {
         merged.ai.profiles = (loadedData.ai?.profiles ?? []).map(profile => ({ ...profile }));
         merged.ai.prompts = (loadedData.ai?.prompts ?? []).map(prompt => ({ ...prompt }));
         merged.ai.usage = { ...DEFAULT_AI_SETTINGS.usage, ...(loadedData.ai?.usage ?? {}) };
+        // Before the output-language setting existed, a translation language
+        // doubled as the answer language. Keep that for anyone who set one.
+        if (loadedData.ai && loadedData.ai.outputLanguageMode === undefined && loadedData.ai.defaultTargetLanguage?.trim()) {
+            merged.ai.outputLanguageMode = 'custom';
+            merged.ai.customOutputLanguage = loadedData.ai.defaultTargetLanguage.trim();
+        }
 
         return merged;
     }
@@ -700,6 +725,31 @@ export default class HighlightCommentsPlugin extends Plugin {
      * note. The plugin reads the colour straight back out of that markup, so it
      * survives without depending on stored state.
      */
+    /** The not-yet-highlighted image embed under the cursor, if any. */
+    private findImageAtCursor(editor: Editor): { line: number; from: number; to: number } | null {
+        const cursor = editor.getCursor();
+        const range = findImageEmbedAt(editor.getLine(cursor.line), cursor.ch);
+        if (!range || range.highlighted) return null;
+        return { line: cursor.line, from: range.from, to: range.to };
+    }
+
+    /**
+     * Highlights the image embed under the cursor as `==![[…]]==`.
+     *
+     * Always the plain form: a coloured highlight is written as `<mark>`, and
+     * Obsidian does not render an embed inside inline HTML.
+     */
+    async highlightImageAtCursor(editor: Editor): Promise<boolean> {
+        const target = this.findImageAtCursor(editor);
+        if (!target) {
+            new Notice(t('notices.noImageAtCursor'));
+            return false;
+        }
+        editor.setSelection({ line: target.line, ch: target.from }, { line: target.line, ch: target.to });
+        await this.createHighlight(editor);
+        return true;
+    }
+
     async createHighlight(editor: Editor, color?: string) {
         const selection = editor.getSelection();
         if (!selection) {
@@ -2350,6 +2400,7 @@ export default class HighlightCommentsPlugin extends Plugin {
                 checkCallback: (checking: boolean) => {
                     const highlight = this.getHighlightForAiCommand();
                     if (!highlight) return false;
+                    if (isImageOnlyPrompt(prompt) && !isImageHighlightText(highlight.text)) return false;
                     if (!checking) {
                         void runPromptOnHighlight(this, prompt, highlight);
                     }
@@ -2365,7 +2416,8 @@ export default class HighlightCommentsPlugin extends Plugin {
                 id: batchId,
                 name: t('commands.runAiPromptOnNote', { name: prompt.name }),
                 checkCallback: (checking: boolean) => {
-                    const highlights = this.getHighlightsForAiBatch();
+                    const highlights = this.getHighlightsForAiBatch()
+                        .filter(highlight => !isImageOnlyPrompt(prompt) || isImageHighlightText(highlight.text));
                     if (highlights.length === 0) return false;
                     if (!checking) {
                         void runPromptOnHighlights(this, prompt, highlights);
@@ -3907,6 +3959,18 @@ class DisplayModeNameModal extends Modal {
     }
 }
 
+const SETTINGS_TABS = [
+    { id: 'general', icon: 'settings' },
+    { id: 'appearance', icon: 'palette' },
+    { id: 'comments', icon: 'message-square' },
+    { id: 'ai', icon: 'sparkles' },
+    { id: 'filters', icon: 'filter' },
+    { id: 'tasks', icon: 'check-square' },
+    { id: 'backup', icon: 'archive' }
+] as const;
+
+type SettingsTabId = typeof SETTINGS_TABS[number]['id'];
+
 class HighlightSettingTab extends PluginSettingTab {
     plugin: HighlightCommentsPlugin;
 
@@ -3924,8 +3988,8 @@ class HighlightSettingTab extends PluginSettingTab {
     }
 
     display(): void {
-        const { containerEl } = this;
-        containerEl.empty();
+        const panes = this.renderTabs();
+        let containerEl = panes.general;
 
         // DISPLAY SECTION
         new Setting(containerEl).setHeading().setName(t('settings.display.heading'));
@@ -4092,6 +4156,8 @@ class HighlightSettingTab extends PluginSettingTab {
         // List existing display modes
         const displayModesContainer = containerEl.createDiv();
         this.renderDisplayModes(displayModesContainer);
+
+        containerEl = panes.appearance;
 
         // TYPOGRAPHY SECTION
         new Setting(containerEl).setHeading().setName(t('settings.typography.heading'));
@@ -4397,6 +4463,8 @@ class HighlightSettingTab extends PluginSettingTab {
                     this.plugin.refreshSidebar();
                 }));
 
+        containerEl = panes.comments;
+
         // COMMENTS SECTION
         new Setting(containerEl).setHeading().setName(t('settings.comments.heading'));
 
@@ -4454,10 +4522,14 @@ class HighlightSettingTab extends PluginSettingTab {
                     void this.plugin.scanAllFilesForHighlights();
                 }));
 
+        containerEl = panes.ai;
+
         // AI SECTION
         // Owns and re-renders its own container so adding or switching a
         // profile does not rebuild this whole settings tab.
         renderAiSettings(containerEl.createDiv({ cls: 'sh-ai-settings-section' }), this.plugin);
+
+        containerEl = panes.comments;
 
         // CUSTOM PATTERNS SECTION
         // Create heading with experimental badge
@@ -4541,6 +4613,8 @@ class HighlightSettingTab extends PluginSettingTab {
         };
 
         renderPatterns();
+
+        containerEl = panes.filters;
 
         // FILTERS SECTION
         new Setting(containerEl).setHeading().setName(t('settings.filters.heading'));
@@ -4631,6 +4705,7 @@ class HighlightSettingTab extends PluginSettingTab {
 
         // ========== TASKS TAB SETTINGS ==========
 
+        containerEl = panes.tasks;
         new Setting(containerEl).setHeading().setName(t('settings.tasks.heading'));
 
         new Setting(containerEl)
@@ -4711,6 +4786,8 @@ class HighlightSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                     this.plugin.refreshSidebar();
                 }));
+
+        containerEl = panes.backup;
 
         // BACKUP & RESTORE SECTION
         new Setting(containerEl).setHeading().setName(t('settings.backupRestore.heading'));
@@ -4905,6 +4982,51 @@ class HighlightSettingTab extends PluginSettingTab {
                     await navigator.clipboard.writeText(log);
                     new Notice('Restore log copied to clipboard!');
                 }));
+    }
+
+    /** Remembered across re-renders, so a refresh does not jump back to the first tab. */
+    private activeTab: SettingsTabId = 'general';
+
+    /**
+     * Builds the tab strip and one pane per tab, and returns the panes.
+     *
+     * Every pane is rendered up front and only hidden, rather than built on
+     * demand: sections keep their own references to the elements they
+     * create, and switching tabs should never lose an unsaved text field.
+     */
+    private renderTabs(): Record<SettingsTabId, HTMLElement> {
+        const { containerEl } = this;
+        containerEl.empty();
+        containerEl.addClass('sh-settings');
+
+        const nav = containerEl.createDiv({ cls: 'sh-settings-tabs', attr: { role: 'tablist' } });
+        const panes = {} as Record<SettingsTabId, HTMLElement>;
+        const buttons = {} as Record<SettingsTabId, HTMLElement>;
+
+        const select = (id: SettingsTabId) => {
+            this.activeTab = id;
+            for (const tab of SETTINGS_TABS) {
+                const active = tab.id === id;
+                buttons[tab.id].toggleClass('is-active', active);
+                buttons[tab.id].setAttr('aria-selected', String(active));
+                panes[tab.id].toggle(active);
+            }
+        };
+
+        for (const tab of SETTINGS_TABS) {
+            const button = nav.createEl('button', {
+                cls: 'sh-settings-tab',
+                attr: { role: 'tab', type: 'button' }
+            });
+            setIcon(button.createSpan({ cls: 'sh-settings-tab-icon' }), tab.icon);
+            button.createSpan({ text: t(`settings.tabs.${tab.id}`) });
+            button.addEventListener('click', () => select(tab.id));
+            buttons[tab.id] = button;
+            panes[tab.id] = containerEl.createDiv({ cls: 'sh-settings-pane', attr: { role: 'tabpanel' } });
+        }
+
+        select(this.activeTab);
+        return panes;
     }
 
     private renderDisplayModes(container: HTMLElement) {

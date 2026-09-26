@@ -46,9 +46,21 @@ export interface AiProfile {
     maxTokens?: number;
 }
 
+/** An image sent alongside a message, for vision-capable models. */
+export interface AiImage {
+    /** e.g. `image/png`. */
+    mimeType: string;
+    /** Base64 body, without a `data:` prefix. */
+    data: string;
+    /** Shown in confirmations and logs instead of the bytes. */
+    name?: string;
+}
+
 export interface AiMessage {
     role: 'system' | 'user' | 'assistant';
     content: string;
+    /** Images attached to a user turn. Ignored on system and assistant turns. */
+    images?: AiImage[];
 }
 
 export interface AiRequest {
@@ -144,6 +156,13 @@ export interface PromptPreset {
     outputTarget: PromptOutputTarget;
     enabled: boolean;
     sortOrder: number;
+    /**
+     * Whole-note prompts only: when a long note is split into parts, fold the
+     * partial answers into one with a final request instead of joining them.
+     * Right for syntheses (a summary, a review), wrong for output that follows
+     * the document (an outline, extracted passages).
+     */
+    mergeParts?: boolean;
 }
 
 /**
@@ -177,6 +196,10 @@ export interface AiSettings {
     /** Only user-added prompts and patches over builtins; see StoredPrompt. */
     prompts: StoredPrompt[];
     defaultTargetLanguage: string;
+    /** Which language answers are written in; see output-language.ts. */
+    outputLanguageMode: 'ui' | 'source' | 'custom';
+    /** Used when `outputLanguageMode` is `custom`. */
+    customOutputLanguage: string;
     /** Upper bound on note text injected as context. */
     contextCharLimit: number;
     /**
@@ -262,6 +285,10 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
     activeProfileId: null,
     prompts: [],
     defaultTargetLanguage: '',
+    // Follow the interface language: a reader who runs Obsidian in Chinese
+    // expects a Chinese answer even about an English passage.
+    outputLanguageMode: 'ui',
+    customOutputLanguage: '',
     contextCharLimit: 4000,
     // Enough for a long note in one request without being a bill by accident;
     // longer notes are split into requests at natural document boundaries.

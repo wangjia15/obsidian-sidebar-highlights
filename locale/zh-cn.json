@@ -5,10 +5,11 @@
     "goToCollection": "转到{{name}}",
     "applyDisplayMode": "应用显示模式：{{name}}",
     "runAiPrompt": "AI：{{name}}",
-    "runAiPromptOnNote": "AI：{name}（当前笔记全部高亮）",
+    "runAiPromptOnNote": "AI：{{name}}（当前笔记全部高亮）",
     "exportExcalidraw": "将当前笔记的高亮导出为 Excalidraw 思维导图",
     "syncExcalidraw": "刷新 Excalidraw 思维导图",
-    "runAiPromptOnDocument": "对整篇笔记运行：{{name}}"
+    "runAiPromptOnDocument": "对整篇笔记运行：{{name}}",
+    "highlightImage": "高亮光标处的图片"
   },
   "tabs": {
     "currentNote": "当前笔记",
@@ -104,6 +105,21 @@
         "name": "注释文本大小",
         "desc": "调整注释文本大小（默认为 11）。",
         "placeholder": "11"
+      },
+      "highlightTextWeight": {
+        "name": "高亮文字粗细",
+        "desc": "调整侧边栏高亮文字的字重（默认：常规）。"
+      },
+      "taskTextWeight": {
+        "name": "任务文字粗细",
+        "desc": "调整侧边栏任务文字的字重（默认：常规）。"
+      },
+      "fontWeight": {
+        "light": "细体 (300)",
+        "normal": "常规 (400)",
+        "medium": "中等 (500)",
+        "semiBold": "半粗 (600)",
+        "bold": "粗体 (700)"
       }
     },
     "styling": {
@@ -256,6 +272,17 @@
         "confirm": {
           "name": "首次发送前确认",
           "desc": "在任何内容离开本机之前，按 vault 提示一次目标地址与载荷大小。"
+        },
+        "outputLanguage": {
+          "name": "回答语言",
+          "desc": "AI 回答使用的语言。翻译类提示词使用下方的翻译语言。",
+          "ui": "与 Obsidian 界面语言一致",
+          "source": "与原文语言一致",
+          "custom": "自定义"
+        },
+        "customOutputLanguage": {
+          "name": "自定义回答语言",
+          "desc": "例如：简体中文、English、日本語。"
         }
       },
       "prompts": {
@@ -308,7 +335,7 @@
       "usage": {
         "heading": "本月用量",
         "desc": "仅本地统计，不会发送到任何地方。不记录提示词与回答内容，只记录总数。",
-        "summary": "{calls} 次调用 · {promptTokens} 提示 tokens · {completionTokens} 生成 tokens",
+        "summary": "{{calls}} 次调用 · {{promptTokens}} 提示 tokens · {{completionTokens}} 生成 tokens",
         "none": "本月尚无记录。",
         "reset": "清空统计",
         "resetDone": "用量统计已清空"
@@ -440,6 +467,15 @@
         "name": "在笔记旁边打开思维导图",
         "desc": "在笔记右侧的分栏中打开思维导图，便于对照阅读。关闭则在新标签页中打开。"
       }
+    },
+    "tabs": {
+      "general": "常规",
+      "appearance": "外观",
+      "comments": "评论",
+      "ai": "AI",
+      "filters": "过滤与导出",
+      "tasks": "任务",
+      "backup": "备份"
     }
   },
   "ai": {
@@ -475,7 +511,19 @@
       "untitled": "未命名提示词",
       "noteSummary": "总结全文",
       "noteExtract": "摘录并标记",
-      "noteOutline": "生成大纲"
+      "noteOutline": "生成大纲",
+      "imageComment": "点评图片",
+      "terms": "术语解释",
+      "critique": "批判性评估",
+      "formula": "公式解读",
+      "results": "解读实验结果",
+      "ideas": "研究启发",
+      "paperCard": "论文精读卡片",
+      "paperReview": "审稿式评估",
+      "highlightReview": "高亮复盘",
+      "paperQuiz": "自测问答",
+      "reproduce": "复现清单",
+      "relatedWork": "相关工作梳理"
     },
     "run": {
       "working": "正在执行 {{name}}…",
@@ -487,12 +535,12 @@
     },
     "batch": {
       "empty": "没有可执行的高亮",
-      "starting": "正在处理 {count} 条高亮…",
-      "progress": "{done}/{total} · {current}",
+      "starting": "正在处理 {{count}} 条高亮…",
+      "progress": "{{done}}/{{total}} · {{current}}",
       "stop": "停止",
-      "done": "已完成 {count} 条高亮。",
-      "stopped": "已停止，完成 {count} 条高亮。",
-      "failures": "{count} 条失败：{names}",
+      "done": "已完成 {{count}} 条高亮。",
+      "stopped": "已停止，完成 {{count}} 条高亮。",
+      "failures": "{{count}} 条失败：{{names}}",
       "writeFailed": "评论写入失败"
     },
     "note": {
@@ -504,6 +552,11 @@
       "markedSome": "已标记 {{marked}} 处；{{missed}} 处未能在原文中逐字匹配，已跳过。",
       "markedNone": "{{total}} 处摘录均未能在原文中逐字匹配，因此没有标记任何内容。模型做了转述而非原文摘录——请重试，或要求它严格照抄原文。",
       "noPassages": "模型没有返回可标记的内容。"
+    },
+    "image": {
+      "loadFailed": "无法下载图片 {{name}}。",
+      "notFound": "在库中找不到图片：{{name}}",
+      "unsupported": "该图片格式无法发送给模型：{{name}}"
     }
   },
   "sidebar": {
@@ -620,7 +673,8 @@
     "createHighlight": "创建高亮",
     "createHighlightWithColor": "创建高亮（{{color}}）",
     "defaultColor": "默认颜色",
-    "aiComment": "用 AI 为此高亮添加评论"
+    "aiComment": "用 AI 为此高亮添加评论",
+    "highlightImage": "高亮图片"
   },
   "filterMenu": {
     "clear": "清除",
@@ -807,7 +861,9 @@
       "manyRequests": "本文较长，会拆成多次请求发送，费用是单次的数倍，因此即使已关闭逐次确认也仍需确认一次。",
       "dontAsk": "此 vault 中不再询问",
       "cancel": "取消",
-      "send": "发送"
+      "send": "发送",
+      "images": "图片",
+      "imagesValue": "{{names}}（约 {{kb}} KB）"
     },
     "aiResult": {
       "generating": "生成中…",
@@ -858,11 +914,13 @@
     "excalidrawNothingToExport": "没有可导出的高亮",
     "excalidrawExportFailed": "无法创建 Excalidraw 文件：{{reason}}",
     "excalidrawUpdated": "思维导图已刷新：{{path}}",
-    "excalidrawNotAMindmap": "该文件不是 Sidebar Highlights 导出的思维导图"
+    "excalidrawNotAMindmap": "该文件不是 Sidebar Highlights 导出的思维导图",
+    "noImageAtCursor": "请先将光标放在图片嵌入上。"
   },
   "render": {
     "diagramError": "图表无法渲染",
-    "diagramZoom": "点击放大"
+    "diagramZoom": "点击放大",
+    "imageMissing": "找不到图片：{{name}}"
   },
   "views": {
     "aiResult": {

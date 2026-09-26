@@ -2971,3 +2971,86 @@
     height: auto;
     font-size: var(--font-ui-smaller);
 }
+
+/* Image highlights: ==![[image.png]]== */
+.highlight-quote.highlight-quote-image {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.highlight-quote-image .highlight-image {
+    display: block;
+    max-width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+}
+
+.highlight-quote-image .highlight-image-caption {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.highlight-quote-image .highlight-image-missing {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+.highlight-quote-image .highlight-image-missing svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Settings: tabbed layout */
+.sh-settings-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sh-settings-tabs .sh-settings-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: var(--radius-m);
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+
+.sh-settings-tabs .sh-settings-tab:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.sh-settings-tabs .sh-settings-tab.is-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.sh-settings-tab-icon {
+    display: inline-flex;
+}
+
+.sh-settings-tab-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.sh-settings-pane > .setting-item-heading:first-child {
+    padding-top: 0;
+}

@@ -5,10 +5,11 @@
     "goToCollection": "Go to {{name}}",
     "applyDisplayMode": "Apply display mode: {{name}}",
     "runAiPrompt": "AI: {{name}}",
-    "runAiPromptOnNote": "AI: {name} (all highlights in note)",
+    "runAiPromptOnNote": "AI: {{name}} (all highlights in note)",
     "exportExcalidraw": "Export note highlights to Excalidraw mindmap",
     "syncExcalidraw": "Refresh Excalidraw mindmap",
-    "runAiPromptOnDocument": "AI on the whole note: {{name}}"
+    "runAiPromptOnDocument": "AI on the whole note: {{name}}",
+    "highlightImage": "Highlight image at cursor"
   },
   "tabs": {
     "currentNote": "Current note",
@@ -271,6 +272,17 @@
         "confirm": {
           "name": "Confirm before the first send",
           "desc": "Shows the destination and the payload size once per vault, before anything leaves your machine."
+        },
+        "outputLanguage": {
+          "name": "Answer language",
+          "desc": "The language AI answers are written in. Translation prompts use the translation language below instead.",
+          "ui": "Same as Obsidian's language",
+          "source": "Same as the source text",
+          "custom": "Custom"
+        },
+        "customOutputLanguage": {
+          "name": "Custom answer language",
+          "desc": "For example 简体中文, English or 日本語."
         }
       },
       "prompts": {
@@ -323,7 +335,7 @@
       "usage": {
         "heading": "Usage this month",
         "desc": "Counted locally and never transmitted. Prompts and answers are not recorded — only totals.",
-        "summary": "{calls} calls · {promptTokens} prompt tokens · {completionTokens} completion tokens",
+        "summary": "{{calls}} calls · {{promptTokens}} prompt tokens · {{completionTokens}} completion tokens",
         "none": "Nothing recorded yet this month.",
         "reset": "Reset totals",
         "resetDone": "Usage totals cleared"
@@ -455,6 +467,15 @@
         "name": "Open mindmaps beside the note",
         "desc": "Open a mindmap in a split pane next to the note it came from, so the two can be read together. Turn off to open it in a new tab instead."
       }
+    },
+    "tabs": {
+      "general": "General",
+      "appearance": "Appearance",
+      "comments": "Comments",
+      "ai": "AI",
+      "filters": "Filters & export",
+      "tasks": "Tasks",
+      "backup": "Backup"
     }
   },
   "ai": {
@@ -490,7 +511,19 @@
       "untitled": "Untitled prompt",
       "noteSummary": "Summarize the note",
       "noteExtract": "Extract and highlight",
-      "noteOutline": "Outline the note"
+      "noteOutline": "Outline the note",
+      "imageComment": "Comment on image",
+      "terms": "Explain terms",
+      "critique": "Critique",
+      "formula": "Explain formula",
+      "results": "Interpret results",
+      "ideas": "Research ideas",
+      "paperCard": "Paper reading card",
+      "paperReview": "Peer review",
+      "highlightReview": "Review my highlights",
+      "paperQuiz": "Self-test questions",
+      "reproduce": "Reproduction checklist",
+      "relatedWork": "Map related work"
     },
     "run": {
       "working": "Running {{name}}…",
@@ -502,12 +535,12 @@
     },
     "batch": {
       "empty": "No highlights to run this on",
-      "starting": "Running on {count} highlights…",
-      "progress": "{done}/{total} · {current}",
+      "starting": "Running on {{count}} highlights…",
+      "progress": "{{done}}/{{total}} · {{current}}",
       "stop": "Stop",
-      "done": "Finished {count} highlights.",
-      "stopped": "Stopped after {count} highlights.",
-      "failures": "{count} failed: {names}",
+      "done": "Finished {{count}} highlights.",
+      "stopped": "Stopped after {{count}} highlights.",
+      "failures": "{{count}} failed: {{names}}",
       "writeFailed": "The comment could not be written"
     },
     "note": {
@@ -519,6 +552,11 @@
       "markedSome": "Highlighted {{marked}} passages. {{missed}} could not be found in the note word for word and were skipped.",
       "markedNone": "None of the {{total}} passages matched the note word for word, so nothing was highlighted. The model paraphrased instead of quoting — try again, or ask it to quote exactly.",
       "noPassages": "The model returned no passages to highlight."
+    },
+    "image": {
+      "loadFailed": "Could not download the image {{name}}.",
+      "notFound": "Image not found in the vault: {{name}}",
+      "unsupported": "This image format cannot be sent to the model: {{name}}"
     }
   },
   "sidebar": {
@@ -635,7 +673,8 @@
     "createHighlight": "Create highlight",
     "createHighlightWithColor": "Create highlight ({{color}})",
     "defaultColor": "Default color",
-    "aiComment": "AI comment on this highlight"
+    "aiComment": "AI comment on this highlight",
+    "highlightImage": "Highlight image"
   },
   "filterMenu": {
     "clear": "Clear",
@@ -822,7 +861,9 @@
       "manyRequests": "A note this long is sent in several requests and costs several times what one does, so it is confirmed even though per-send confirmation is off.",
       "dontAsk": "Don't ask again for this vault",
       "cancel": "Cancel",
-      "send": "Send"
+      "send": "Send",
+      "images": "Images",
+      "imagesValue": "{{names}} (about {{kb}} KB)"
     },
     "aiResult": {
       "generating": "Generating…",
@@ -873,11 +914,13 @@
     "excalidrawNothingToExport": "No highlights to export",
     "excalidrawExportFailed": "Could not create the Excalidraw file: {{reason}}",
     "excalidrawUpdated": "Mindmap refreshed at {{path}}",
-    "excalidrawNotAMindmap": "This file is not a mindmap exported by Sidebar Highlights"
+    "excalidrawNotAMindmap": "This file is not a mindmap exported by Sidebar Highlights",
+    "noImageAtCursor": "Place the cursor on an image embed first."
   },
   "render": {
     "diagramError": "Diagram could not be rendered",
-    "diagramZoom": "Click to open larger"
+    "diagramZoom": "Click to open larger",
+    "imageMissing": "Image not found: {{name}}"
   },
   "views": {
     "aiResult": {
