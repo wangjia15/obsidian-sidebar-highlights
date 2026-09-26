@@ -6,6 +6,8 @@ import { t } from '../i18n';
 import { isSearchOpaque, needsRichRender, RichCommentRenderer } from './rich-markdown-renderer';
 import { DiagramZoomModal } from '../modals/diagram-zoom-modal';
 import { isRecolorable } from '../utils/highlight-markup';
+import { imageDisplayName, parseImageEmbed } from '../utils/image-embed';
+import { imageDisplayUrl } from '../ai/image-loader';
 
 export interface HighlightRenderOptions {
     searchTerm?: string;
@@ -159,7 +161,9 @@ export class HighlightRenderer {
 
     private createQuoteSection(item: HTMLElement, highlight: Highlight, options: HighlightRenderOptions): void {
         const quoteEl = item.createDiv({ cls: 'highlight-quote' });
-        this.renderMarkdownToElement(quoteEl, highlight.text);
+        if (!this.renderImageQuote(quoteEl, highlight)) {
+            this.renderMarkdownToElement(quoteEl, highlight.text);
+        }
 
         if (options.searchTerm && options.searchTerm.length > 0) {
             this.highlightSearchMatches(quoteEl, options.searchTerm);
@@ -186,6 +190,31 @@ export class HighlightRenderer {
                 state: { scroll: highlight.startOffset }
             });
         });
+    }
+
+    /**
+     * Shows an image highlight as the picture itself. Returns false when the
+     * highlight is not an image, so the caller renders it as text.
+     */
+    private renderImageQuote(quoteEl: HTMLElement, highlight: Highlight): boolean {
+        const embed = parseImageEmbed(highlight.text);
+        if (!embed) return false;
+
+        quoteEl.addClass('highlight-quote-image');
+        const name = imageDisplayName(embed);
+        const url = imageDisplayUrl(this.plugin.app, embed, highlight.filePath);
+        if (url) {
+            quoteEl.createEl('img', {
+                cls: 'highlight-image',
+                attr: { src: url, alt: name, loading: 'lazy', draggable: 'false' }
+            });
+        } else {
+            const missing = quoteEl.createDiv({ cls: 'highlight-image-missing' });
+            setIcon(missing.createSpan(), 'image-off');
+            missing.createSpan({ text: t('render.imageMissing', { name }) });
+        }
+        quoteEl.createDiv({ cls: 'highlight-image-caption', text: name });
+        return true;
     }
 
     private addTagsToQuote(quoteEl: HTMLElement, highlight: Highlight, options: HighlightRenderOptions): void {

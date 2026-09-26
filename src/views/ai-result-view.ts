@@ -93,6 +93,7 @@ export class AiResultView extends ItemView {
     private running = false;
     private bypassCache = false;
     private pendingBatches: AiMessage[][] | null = null;
+    private pendingMerge: ((partTexts: string[]) => AiMessage[]) | null = null;
     /** The element streamed text is written into, reused across deltas. */
     private streamEl: HTMLElement | null = null;
     /** Where a reasoning model's thinking goes until the answer displaces it. */
@@ -146,6 +147,7 @@ export class AiResultView extends ItemView {
         this.profile = run.prepared.profile;
         this.conversation = [...run.prepared.messages];
         this.pendingBatches = run.prepared.messageBatches ?? null;
+        this.pendingMerge = run.prepared.mergeMessages ?? null;
 
         this.renderChrome();
         this.renderHeader();
@@ -241,7 +243,9 @@ export class AiResultView extends ItemView {
 
         send.addEventListener('click', submit);
         input.addEventListener('keydown', event => {
-            if (event.key === 'Enter') {
+            // Enter also confirms a word in a Chinese or Japanese IME; that
+            // keystroke belongs to the input method, not to the send button.
+            if (event.key === 'Enter' && !event.isComposing) {
                 event.preventDefault();
                 submit();
             }
@@ -319,9 +323,9 @@ export class AiResultView extends ItemView {
         const chunks = this.pendingBatches?.length ?? 1;
 
         try {
-            const { combined: answer, parts } = await this.runRequest(this.controller.signal);
+            const { combined: answer, parts, answers } = await this.runRequest(this.controller.signal);
 
-            this.result = this.run.joinParts?.(parts) ?? answer.text;
+            this.result = this.run.joinParts?.(answers) ?? answer.text;
             this.continueFrom(this.result, chunks);
             this.pendingBatches = null;
             this.running = false;
@@ -368,7 +372,7 @@ export class AiResultView extends ItemView {
     }
 
     /** Streams when the setting and the platform allow it; otherwise waits. */
-    private async runRequest(signal: AbortSignal): Promise<{ combined: AiResult; parts: AiResult[] }> {
+    private async runRequest(signal: AbortSignal): Promise<{ combined: AiResult; parts: AiResult[]; answers: AiResult[] }> {
         return runAiMessageBatches(
             this.plugin.aiService,
             this.pendingBatches ?? [this.conversation],
@@ -376,6 +380,8 @@ export class AiResultView extends ItemView {
                 profile: this.profile as AiProfile,
                 bypassCache: this.bypassCache,
                 signal,
+                // Only for the document's own run; a follow-up is one request.
+                merge: this.pendingBatches ? this.pendingMerge ?? undefined : undefined,
                 onText: text => {
                     this.result = text;
                     this.renderStreamingText();
@@ -521,11 +527,13 @@ export class AiResultView extends ItemView {
             const prepared = await this.run.source.prepare(this.profile);
             this.conversation = [...prepared.messages];
             this.pendingBatches = prepared.messageBatches ?? null;
+            this.pendingMerge = prepared.mergeMessages ?? null;
         } catch {
             // The highlight or its note may be gone; fall back to what we sent
             // the first time rather than failing the retry outright.
             this.conversation = [...this.run.prepared.messages];
             this.pendingBatches = this.run.prepared.messageBatches ?? null;
+            this.pendingMerge = this.run.prepared.mergeMessages ?? null;
         }
         await this.send();
     }

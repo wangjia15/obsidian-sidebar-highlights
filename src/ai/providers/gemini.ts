@@ -31,7 +31,12 @@ export class GeminiProvider implements Provider {
             .filter(message => message.role !== 'system')
             .map(message => ({
                 role: message.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: message.content }]
+                parts: [
+                    ...(message.role === 'user' ? message.images ?? [] : []).map(image => ({
+                        inline_data: { mime_type: image.mimeType, data: image.data }
+                    })),
+                    { text: message.content }
+                ]
             }));
 
         if (contents.length === 0) {

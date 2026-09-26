@@ -81,6 +81,13 @@ interface BuiltinPromptDef {
     template: string;
     scope?: PromptScope;
     outputTarget: PromptOutputTarget;
+    /** See PromptPreset.mergeParts. */
+    mergeParts?: boolean;
+    /**
+     * False ships the prompt switched off: useful, but specialised enough that
+     * listing it in every menu by default would crowd out the common ones.
+     */
+    enabledByDefault?: boolean;
 }
 
 /**
@@ -93,45 +100,103 @@ interface BuiltinPromptDef {
  * an English-locale install. Only the display names are localized, because
  * those are chrome rather than instructions.
  */
+const MIRROR = 'Answer in the same language as the text you are given.';
+const MIRROR_DOC = 'Answer in the same language as the document.';
+/** Shared by every prompt that reads a paper: invented detail is the failure that costs a reader most. */
+const GROUNDED = 'Base everything on the text provided. If something is not stated there, say so plainly instead of guessing, and never invent numbers, citations or results.';
+/** Filled only when note context is enabled; the prompts are written to work without it. */
+const CONTEXT_BLOCK = 'Surrounding text from the same note, for reference (may be empty):\n"""\n{{context}}\n"""';
+
 const BUILTIN_PROMPT_DEFS: BuiltinPromptDef[] = [
     {
         id: 'summarize',
         icon: 'list',
         nameKey: 'ai.prompts.summarize',
-        system: 'You condense text for a reader\'s own notes. Answer in the same language as the text you are given.',
-        template: 'Summarize the following in at most three bullet points, keeping the author\'s own terminology. Output only the bullets.\n\n{{selection}}',
+        system: `You condense passages of academic papers and other texts for a reader's own notes. ${MIRROR} ${GROUNDED}`,
+        template: 'Summarize the passage below in at most three bullet points. Lead with its main claim or finding; keep the author\'s terminology, and keep any key numbers (metrics, sizes, percentages) exactly. Output only the bullets.\n\n"""\n{{selection}}\n"""',
         outputTarget: 'both'
     },
     {
         id: 'explain',
         icon: 'lightbulb',
         nameKey: 'ai.prompts.explain',
-        system: 'You explain difficult passages plainly. Answer in the same language as the text you are given.',
-        template: 'Explain the following for someone meeting it for the first time. Use plain language, and add one concrete example if it earns its place.\n\n{{selection}}',
+        system: `You explain difficult passages — often from research papers — to a smart reader outside the field. ${MIRROR} ${GROUNDED}`,
+        template: 'Explain the passage below.\n\n1. **In plain words** — what it says, in two or three sentences.\n2. **Key terms** — any jargon or acronym it relies on, one line each.\n3. **Why it matters** — what role this plays in the author\'s argument.\n4. **Example** — one concrete example, only if it genuinely helps.\n\nBe concise and skip any section that would be empty.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
         outputTarget: 'both'
     },
     {
         id: 'translate',
         icon: 'languages',
         nameKey: 'ai.prompts.translate',
-        system: 'You are a translator. You output translations and nothing else.',
-        template: 'Translate the following into {{targetLang}}. Output only the translation, with no commentary and no quotation marks.\n\n{{selection}}',
+        system: 'You are an academic translator. You output translations and nothing else.',
+        template: 'Translate the following into {{targetLang}}, in a fluent academic register.\n\nRules:\n- Keep citation markers ([12], (Smith et al., 2020)), numbers, formulas, code and model/dataset names unchanged.\n- For each established technical term, give the translation followed by the original in parentheses the first time it appears, e.g. 注意力机制 (attention mechanism).\n- Output only the translation, with no commentary and no quotation marks.\n\n{{selection}}',
+        outputTarget: 'both'
+    },
+    {
+        id: 'terms',
+        icon: 'book-open',
+        nameKey: 'ai.prompts.terms',
+        system: `You are a glossary writer for readers of research papers. ${MIRROR}`,
+        template: 'List the technical terms, acronyms and named methods, models or datasets in the passage below that a reader might not know. For each, output one bullet: **term** (expansion if an acronym) — a one-sentence definition as the term is used here. Skip everyday words. If the passage defines a term itself, use its definition. Output only the list.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
+        outputTarget: 'both'
+    },
+    {
+        id: 'critique',
+        icon: 'scale',
+        nameKey: 'ai.prompts.critique',
+        system: `You are a rigorous but fair peer reviewer. ${MIRROR} ${GROUNDED}`,
+        template: 'Critically assess the claim or argument in the passage below.\n\n- **Claim** — what exactly is being asserted, in one sentence.\n- **Evidence** — what support the passage offers, and how strong it is.\n- **Assumptions** — what must hold for the claim to be true.\n- **Weaknesses** — gaps, confounds, overreach or alternative explanations.\n- **What would convince me** — the evidence or experiment that would settle it.\n\nKeep each point short and specific to this passage.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
+        outputTarget: 'both'
+    },
+    {
+        id: 'formula',
+        icon: 'sigma',
+        nameKey: 'ai.prompts.formula',
+        system: `You explain mathematics in research papers step by step. ${MIRROR} ${GROUNDED}`,
+        template: 'Explain the formula or mathematical passage below.\n\n1. **What it computes** — its purpose in one or two sentences.\n2. **Symbols** — each symbol and its meaning, as a list. Write math in LaTeX between $…$.\n3. **Intuition** — how the pieces combine and why the formula has this shape.\n4. **Edge cases** — what happens at extreme values, if that is informative.\n\nIf a symbol is not defined in the text given, say it is undefined rather than guessing.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
+        outputTarget: 'both'
+    },
+    {
+        id: 'results',
+        icon: 'table',
+        nameKey: 'ai.prompts.results',
+        system: `You interpret experimental results in research papers. ${MIRROR} ${GROUNDED}`,
+        template: 'Interpret the experimental results below (a results paragraph, table or ablation).\n\n- **Setup** — what is compared, on which data, with which metric (and whether higher or lower is better).\n- **Key numbers** — the most important results, quoted exactly.\n- **Takeaway** — what the results show, in one or two sentences.\n- **Caveats** — missing baselines, small margins, cherry-picked settings or anything else a careful reader should notice.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
         outputTarget: 'both'
     },
     {
         id: 'ask',
         icon: 'help-circle',
         nameKey: 'ai.prompts.ask',
-        system: 'You help a reader interrogate what they are reading. Answer in the same language as the text you are given.',
-        template: 'Read the following and pose the three questions most worth digging into. Output only the questions, one per line.\n\n{{selection}}',
+        system: `You help a reader interrogate what they are reading. ${MIRROR}`,
+        template: 'Read the passage below and pose the three questions most worth digging into — about its assumptions, its evidence, or how it connects to the rest of the work. Prefer questions the text does not already answer. Output only the questions, one per line.\n\n"""\n{{selection}}\n"""',
         outputTarget: 'both'
+    },
+    {
+        id: 'ideas',
+        icon: 'flask-conical',
+        nameKey: 'ai.prompts.ideas',
+        system: `You are a research mentor who turns reading into research ideas. ${MIRROR}`,
+        template: 'Based on the passage below, suggest three concrete follow-up research ideas: extensions, applications to other settings, or experiments that would test its limits. For each, give a one-line idea and one sentence on why it is promising. Output only the three ideas as a numbered list.\n\n"""\n{{selection}}\n"""\n\n' + CONTEXT_BLOCK,
+        outputTarget: 'both',
+        enabledByDefault: false
     },
     {
         id: 'tags',
         icon: 'tags',
         nameKey: 'ai.prompts.tags',
         system: 'You label notes for retrieval.',
-        template: 'Suggest three to five tags for the following, formatted as Obsidian tags: a leading #, lowercase, hyphens instead of spaces. Output only the tags on a single line, separated by spaces.\n\n{{selection}}',
+        template: 'Suggest three to five tags for the following, formatted as Obsidian tags: a leading #, lowercase, hyphens instead of spaces. Prefer topic, method and task names over generic words. Output only the tags on a single line, separated by spaces.\n\n{{selection}}',
+        outputTarget: 'both'
+    },
+    {
+        id: 'image-comment',
+        icon: 'image',
+        nameKey: 'ai.prompts.imageComment',
+        // Only offered on image highlights (see isImageOnlyPrompt): the image
+        // itself travels with the request, and {{selection}} names it.
+        system: `You read figures, charts, tables and diagrams from research papers and other documents, and comment on them for a reader's notes. ${GROUNDED}`,
+        template: 'Comment on the attached image for my notes.\n\n- **What it is** — the kind of figure (architecture diagram, plot, table, example…) and what it depicts.\n- **How to read it** — axes, legend, components or panels, briefly.\n- **Main point** — the finding or idea it conveys; quote key numbers or labels exactly as shown.\n- **Worth noticing** — anything surprising, subtle, or easy to miss.\n\nBe concise. Only describe what is visible; if text in the image is illegible, say so.\n\nImage: {{selection}}\nNote: {{noteTitle}}\n\n' + CONTEXT_BLOCK,
         outputTarget: 'both'
     },
     {
@@ -139,9 +204,71 @@ const BUILTIN_PROMPT_DEFS: BuiltinPromptDef[] = [
         icon: 'scroll-text',
         nameKey: 'ai.prompts.noteSummary',
         scope: 'note',
-        system: 'You summarize a document for the person who wrote or collected it. Answer in the same language as the document.',
-        template: 'Summarize the note below.\n\nOpen with one sentence saying what it is about, then give the main points as bullets in the order the note makes them. Keep the author\'s own terminology. Do not add anything the note does not say.\n\n# {{noteTitle}}\n\n{{note}}',
+        system: `You summarize a document for the person who wrote or collected it. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'Summarize the note below.\n\nOpen with one sentence saying what it is about, then give the main points as bullets in the order the note makes them. Keep the author\'s own terminology and key numbers. Do not add anything the note does not say.\n\n# {{noteTitle}}\n\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true
+    },
+    {
+        id: 'paper-card',
+        icon: 'file-text',
+        nameKey: 'ai.prompts.paperCard',
+        scope: 'note',
+        system: `You write structured reading notes on research papers. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'Write a reading card for the paper below, in Markdown, with exactly these sections:\n\n## TL;DR\nOne or two sentences.\n## Problem & motivation\nWhat problem it tackles and why existing approaches fall short.\n## Method\nThe core idea and the main components, as a short list.\n## Contributions\nWhat the authors claim is new, as a list.\n## Experiments\nDatasets, baselines and metrics.\n## Key results\nThe headline numbers, quoted exactly.\n## Limitations\nThose the authors state, and any that are evident but unstated (mark these as such).\n## Takeaways\nWhat is worth remembering or reusing.\n\nWrite "Not stated" for anything the paper does not cover.\n\n# {{noteTitle}}\n\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true
+    },
+    {
+        id: 'paper-review',
+        icon: 'scale',
+        nameKey: 'ai.prompts.paperReview',
+        scope: 'note',
+        system: `You are an experienced, fair and constructive peer reviewer. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'Review the paper below as a reviewer for a top venue would, in Markdown:\n\n## Summary\nWhat the paper does, in a short paragraph.\n## Strengths\n## Weaknesses\nBe specific: point to the section, claim or experiment each concerns.\n## Questions for the authors\n## Missing experiments or comparisons\n## Overall assessment\nTwo or three sentences on significance, novelty and soundness.\n\n# {{noteTitle}}\n\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true
+    },
+    {
+        id: 'highlight-review',
+        icon: 'highlighter',
+        nameKey: 'ai.prompts.highlightReview',
+        scope: 'note',
+        system: `You help a reader consolidate what they marked while reading. ${MIRROR_DOC}`,
+        template: 'Below are the passages I highlighted in this note, each followed by my own comments (indented), and then the note itself for context.\n\nWrite, in Markdown:\n## Key takeaways\nThe main ideas my highlights capture, grouped by theme — not one bullet per highlight.\n## How they connect\nThe relationships between the ideas.\n## Open questions\nQuestions my highlights and comments raise but do not answer.\n## Gaps\nImportant parts of the note I did not highlight, if any.\n\n# {{noteTitle}}\n\n## My highlights\n{{highlights}}\n\n## The note\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true
+    },
+    {
+        id: 'paper-quiz',
+        icon: 'graduation-cap',
+        nameKey: 'ai.prompts.paperQuiz',
+        scope: 'note',
+        system: `You write review questions that test real understanding, not recall of trivia. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'Write 6 to 10 self-test questions about the note below, covering its core ideas, method, key results and limitations. Mix "why" and "how" questions with factual ones.\n\nFormat each as a collapsed Obsidian callout, exactly like this, with a blank line between questions:\n\n> [!question]- The question\n> The answer, in one to three sentences.\n\nOutput only the callouts.\n\n# {{noteTitle}}\n\n{{note}}',
         outputTarget: 'preview'
+    },
+    {
+        id: 'reproduce',
+        icon: 'list-checks',
+        nameKey: 'ai.prompts.reproduce',
+        scope: 'note',
+        system: `You help researchers reproduce published work. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'Extract a reproduction checklist from the paper below, in Markdown:\n\n## Resources\nCode, data and model links; licences if stated.\n## Data\nDatasets, splits, preprocessing.\n## Model & training\nArchitecture details, hyperparameters, optimizer, schedule, compute.\n## Evaluation\nMetrics and protocol.\n## Missing details\nWhat you would need to know to reproduce it that the paper does not say.\n\nUse "Not stated" wherever the paper is silent.\n\n# {{noteTitle}}\n\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true,
+        enabledByDefault: false
+    },
+    {
+        id: 'related-work',
+        icon: 'network',
+        nameKey: 'ai.prompts.relatedWork',
+        scope: 'note',
+        system: `You map how a research paper positions itself against prior work. ${MIRROR_DOC} ${GROUNDED}`,
+        template: 'From the paper below, map the prior work it discusses, in Markdown:\n\nGroup the works into lines of research. For each group, give a heading, then one bullet per work: the work (as the paper cites it) — what it does — how this paper differs from or builds on it. End with a short paragraph on the gap this paper claims to fill.\n\n# {{noteTitle}}\n\n{{note}}',
+        outputTarget: 'preview',
+        mergeParts: true,
+        enabledByDefault: false
     },
     {
         id: 'note-extract',
@@ -176,6 +303,13 @@ const BUILTIN_PROMPT_DEFS: BuiltinPromptDef[] = [
     }
 ];
 
+/** Prompts that only make sense with an image attached. */
+const IMAGE_ONLY_PROMPT_IDS = new Set(['image-comment']);
+
+export function isImageOnlyPrompt(prompt: Pick<PromptPreset, 'id'>): boolean {
+    return IMAGE_ONLY_PROMPT_IDS.has(prompt.id);
+}
+
 const BUILTIN_IDS = new Set(BUILTIN_PROMPT_DEFS.map(def => def.id));
 
 export function isBuiltinPromptId(id: string): boolean {
@@ -193,8 +327,9 @@ export function builtinPrompt(def: BuiltinPromptDef, sortOrder: number): PromptP
         builtin: true,
         scope: def.scope ?? 'highlight',
         outputTarget: def.outputTarget,
-        enabled: true,
-        sortOrder
+        enabled: def.enabledByDefault ?? true,
+        sortOrder,
+        ...(def.mergeParts ? { mergeParts: true } : {})
     };
 }
 

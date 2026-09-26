@@ -3,7 +3,8 @@ import type HighlightCommentsPlugin from '../../main';
 import type { Highlight } from '../../main';
 import { t } from '../i18n';
 import { describeAiError, logSafe } from '../ai/ai-service';
-import { enabledPrompts } from '../ai/prompt-library';
+import { enabledPrompts, enabledPromptsForScope, isImageOnlyPrompt } from '../ai/prompt-library';
+import { isImageHighlightText } from '../utils/image-embed';
 import { preparePromptRun, type PreparedRun } from '../ai/prompt-runner';
 import {
     canUseInlineFootnote,
@@ -31,10 +32,14 @@ export function addAiMenuItems(
     highlight: Highlight,
     options: RunOptions = {}
 ): void {
-    const prompts = enabledPrompts(plugin.settings.ai.prompts);
+    // Whole-note prompts have their own menu; run on a highlight they would
+    // see only that passage while asking about "the document".
+    const prompts = enabledPromptsForScope(plugin.settings.ai.prompts, 'highlight');
     if (prompts.length === 0) return;
 
+    const isImage = isImageHighlightText(highlight.text);
     for (const prompt of prompts) {
+        if (isImageOnlyPrompt(prompt) && !isImage) continue;
         menu.addItem(item => {
             item.setTitle(prompt.name)
                 .setIcon(prompt.icon ?? 'sparkles')
@@ -285,12 +290,14 @@ export async function insertAiComment(
     }
 
     let located = true;
+    let editor: Editor | null = null;
+    let written = '';
     try {
-        const editor = openEditorFor(plugin, highlight.filePath);
+        editor = openEditorFor(plugin, highlight.filePath);
         if (editor) {
             located = writeCommentThroughEditor(editor, highlight, commentText, preferInline);
         } else {
-            await plugin.app.vault.process(file, content => {
+            written = await plugin.app.vault.process(file, content => {
                 const written = writeCommentForHighlight(
                     content,
                     highlight,
@@ -316,6 +323,12 @@ export async function insertAiComment(
         report(t('ai.run.highlightMoved'), 8000);
         return false;
     }
+
+    // Re-read the note now rather than waiting for the debounced editor
+    // rescan, which only runs for edits the workspace reports and so can miss
+    // a write made while the result tab — not the note — has focus. Without
+    // this the comment is in the note but not on the card.
+    plugin.detectAndStoreMarkdownHighlights(editor ? editor.getValue() : written, file);
 
     report(t('ai.run.inserted'));
     return true;

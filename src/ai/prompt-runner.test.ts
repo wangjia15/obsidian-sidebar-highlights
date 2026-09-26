@@ -5,6 +5,11 @@ import { i18n } from '../i18n';
 import { cloneAiSettings, DEFAULT_AI_SETTINGS } from './types';
 import type { AiProfile, PromptPreset } from './types';
 import { collectContextSource, preparePromptRun, prepareNotePromptRun, uiLanguageName } from './prompt-runner';
+import { loadImageForAi } from './image-loader';
+
+jest.mock('./image-loader', () => ({
+    loadImageForAi: jest.fn(async () => ({ mimeType: 'image/png', data: 'AAAA', name: 'chart.png' }))
+}));
 
 const NOTE_CONTENT = '# Heading\n\nThe full body of the note, read from disk.';
 
@@ -167,17 +172,37 @@ describe('preparePromptRun', () => {
 
 
 it('applies output language to both highlight and whole-note prompts, with per-run overrides', async () => {
-    const { plugin } = makePlugin({ defaultTargetLanguage: 'French' });
+    const { plugin } = makePlugin({ outputLanguageMode: 'custom', customOutputLanguage: 'French' });
     const prompt = { ...PROMPT, system: 'Answer in the same language as the text.' };
     const run = await preparePromptRun(plugin, prompt, makeHighlight());
-    expect(run.messages[0].content).toContain('Output language: French');
+    // The contradicting "mirror the source" rule is replaced, not argued with.
+    expect(run.messages[0].content).not.toContain('same language as the text');
+    expect(run.messages[0].content).toContain('answer in French');
+    expect(run.messages.at(-1)?.content).toMatch(/Answer in French\.$/);
     const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
     plugin.highlights = new Map();
     const noteRun = await prepareNotePromptRun(plugin, { ...prompt, scope: 'note' }, file, { targetLanguage: 'German' });
-    expect(noteRun.messages[0].content).toContain('Output language: German');
+    expect(noteRun.messages[0].content).toContain('answer in German');
     expect(noteRun.payloadChars).toBe(noteRun.messages.reduce((sum, message) => sum + message.content.length, 0));
     const extraction = await prepareNotePromptRun(plugin, { ...prompt, scope: 'note', outputTarget: 'highlights' }, file);
-    expect(extraction.messages[0].content).not.toContain('Output language:');
+    expect(extraction.messages[0].content).not.toContain('answer in');
+});
+
+it('answers in the interface language by default, and leaves the prompt alone in source mode', async () => {
+    const { plugin } = makePlugin();
+    const byDefault = await preparePromptRun(plugin, PROMPT, makeHighlight());
+    expect(byDefault.messages.at(-1)?.content).toMatch(/Answer in English\.$/);
+
+    const { plugin: sourcePlugin } = makePlugin({ outputLanguageMode: 'source' });
+    const asSource = await preparePromptRun(sourcePlugin, PROMPT, makeHighlight());
+    expect(asSource.messages.map(message => message.content).join('\n')).not.toContain('Answer in');
+});
+
+it('does not force an answer language onto a translation prompt', async () => {
+    const { plugin } = makePlugin({ outputLanguageMode: 'custom', customOutputLanguage: '简体中文' });
+    const translate: PromptPreset = { ...PROMPT, template: 'Translate into {{targetLang}}:\n\n{{selection}}' };
+    const run = await preparePromptRun(plugin, translate, makeHighlight());
+    expect(run.messages.map(message => message.content).join('\n')).not.toContain('请使用');
 });
 
 it('prepares every part of a long whole note instead of truncating its tail', async () => {
@@ -202,4 +227,35 @@ it('prepares every part of a long whole note instead of truncating its tail', as
     expect((sent.match(/c/g) ?? [])).toHaveLength(300);
     expect(run.messageBatches?.every(batch => batch[0].content.includes('HTML fragment'))).toBe(true);
     expect(run.payloadChars).toBe(run.messageBatches?.flat().reduce((sum, message) => sum + message.content.length, 0));
+});
+
+it('sends an image highlight as an attached image, naming it in place of the markup', async () => {
+    const { plugin } = makePlugin();
+    const run = await preparePromptRun(plugin, PROMPT, makeHighlight({ text: '![[img/chart.png]]' }));
+    const user = run.messages.find(message => message.role === 'user');
+
+    expect(loadImageForAi).toHaveBeenCalledWith(plugin.app, expect.objectContaining({ target: 'img/chart.png' }), 'notes/a.md');
+    expect(user?.images).toEqual([{ mimeType: 'image/png', data: 'AAAA', name: 'chart.png' }]);
+    expect(user?.content).toContain('[image: chart.png]');
+    expect(user?.content).not.toContain('![[');
+});
+
+it('offers a merge request for a split synthesis prompt, restating the task without the document', async () => {
+    const { plugin, cachedRead } = makePlugin({ noteCharLimit: 500 });
+    cachedRead.mockResolvedValue(`# One\n\n${'a'.repeat(480)}\n\n# Two\n\n${'b'.repeat(480)}`);
+    plugin.highlights = new Map();
+    const file = plugin.app.vault.getAbstractFileByPath('notes/a.md') as TFile;
+    const prompt: PromptPreset = { ...PROMPT, scope: 'note', outputTarget: 'preview', template: 'Card for {{noteTitle}}:\n\n{{note}}', mergeParts: true };
+
+    const run = await prepareNotePromptRun(plugin, prompt, file);
+    expect(run.chunkCount).toBeGreaterThan(1);
+    const merge = run.mergeMessages?.(['first part', 'second part']) ?? [];
+    const request = merge.map(message => message.content).join('\n');
+    expect(request).toContain('Card for');
+    expect(request).toContain('Partial result 2 of 2');
+    expect(request).toContain('second part');
+    expect(request).not.toContain('aaaa');
+
+    const joined = await prepareNotePromptRun(plugin, { ...prompt, mergeParts: false }, file);
+    expect(joined.mergeMessages).toBeUndefined();
 });

@@ -42,7 +42,19 @@ export class AnthropicProvider implements Provider {
             .map(message => message.content);
         const turns = request.messages
             .filter(message => message.role !== 'system')
-            .map(message => ({ role: message.role, content: message.content }));
+            .map(message => ({
+                role: message.role,
+                // Images first: Anthropic recommends placing them before the text that refers to them.
+                content: message.role === 'user' && message.images?.length
+                    ? [
+                        ...message.images.map(image => ({
+                            type: 'image',
+                            source: { type: 'base64', media_type: image.mimeType, data: image.data }
+                        })),
+                        { type: 'text', text: message.content }
+                    ]
+                    : message.content
+            }));
 
         if (turns.length === 0) {
             throw new AiError('bad-request', 'Request had no user message');

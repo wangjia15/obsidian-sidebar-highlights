@@ -17,24 +17,37 @@ export interface MultiPartOptions {
 
 export interface MultiPartResult {
     combined: AiResult;
-    /** Individual provider results, used to count each request in usage totals. */
+    /** Every provider result, merge pass included, for counting usage. */
     parts: AiResult[];
+    /**
+     * The results that make up the answer: every part when they were simply
+     * joined, or just the merge pass when there was one. A caller that treats
+     * parts individually (joinAnswerParts) must use these, not `parts`.
+     */
+    answers: AiResult[];
 }
 
-/** Runs each document chunk in order and joins the answers in document order. */
+/**
+ * Runs each document chunk in order and joins the answers in document order.
+ *
+ * With `merge`, a run of more than one part ends with one more request that
+ * folds the partial answers into a single one. Joining is right for output that
+ * follows the document (an outline, extracted passages); it is wrong for a
+ * synthesis — a summary or a review of a long paper would otherwise arrive as
+ * one per part, each ignorant of the others.
+ */
 export async function runAiMessageBatches(
     service: AiService,
     batches: AiMessage[][],
-    options: MultiPartOptions
+    options: MultiPartOptions & { merge?: (partTexts: string[]) => AiMessage[] }
 ): Promise<MultiPartResult> {
     const parts: AiResult[] = [];
     let completeText = '';
 
-    for (const messages of batches) {
-        const prefix = completeText ? `${completeText}\n\n` : '';
+    const runOne = async (messages: AiMessage[], prefix: string): Promise<AiResult> => {
         let current = '';
         let reasoning = '';
-        const result = service.canStream(options.profile)
+        return service.canStream(options.profile)
             ? await service.stream(messages, {
                 profile: options.profile,
                 signal: options.signal,
@@ -59,10 +72,27 @@ export async function runAiMessageBatches(
                 signal: options.signal,
                 bypassCache: options.bypassCache
             });
+    };
 
+    for (const messages of batches) {
+        const prefix = completeText ? `${completeText}\n\n` : '';
+        const result = await runOne(messages, prefix);
         parts.push(result);
         completeText = `${prefix}${result.text.trim()}`;
         options.onText?.(completeText);
+    }
+
+    if (options.merge && parts.length > 1) {
+        // The partial answers stay on screen until the merged one starts
+        // replacing them, so the wait for the last request is not a blank one.
+        const merged = await runOne(options.merge(parts.map(part => part.text.trim())), '');
+        parts.push(merged);
+        options.onText?.(merged.text.trim());
+        return {
+            combined: { text: merged.text.trim(), model: merged.model, usage: sumUsage(parts) },
+            parts,
+            answers: [merged]
+        };
     }
 
     return {
@@ -71,7 +101,8 @@ export async function runAiMessageBatches(
             model: parts.at(-1)?.model,
             usage: sumUsage(parts)
         },
-        parts
+        parts,
+        answers: parts
     };
 }
 

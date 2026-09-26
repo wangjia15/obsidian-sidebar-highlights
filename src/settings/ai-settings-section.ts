@@ -242,6 +242,35 @@ function renderContextSettings(containerEl: HTMLElement, plugin: HighlightCommen
 
     renderNoteSettings(containerEl, plugin);
 
+    // Which language answers come back in. Rendered before the translation
+    // target because it is the one most readers are looking for.
+    const customLanguage = new Setting(containerEl)
+        .setName(t('settings.ai.context.customOutputLanguage.name'))
+        .setDesc(t('settings.ai.context.customOutputLanguage.desc'))
+        .addText(text => text
+            .setPlaceholder('简体中文')
+            .setValue(ai.customOutputLanguage)
+            .onChange(async value => {
+                ai.customOutputLanguage = value.trim();
+                await plugin.saveSettings();
+            }));
+
+    const outputLanguage = new Setting(containerEl)
+        .setName(t('settings.ai.context.outputLanguage.name'))
+        .setDesc(t('settings.ai.context.outputLanguage.desc'))
+        .addDropdown(dropdown => dropdown
+            .addOption('ui', t('settings.ai.context.outputLanguage.ui'))
+            .addOption('source', t('settings.ai.context.outputLanguage.source'))
+            .addOption('custom', t('settings.ai.context.outputLanguage.custom'))
+            .setValue(ai.outputLanguageMode)
+            .onChange(async value => {
+                ai.outputLanguageMode = value as typeof ai.outputLanguageMode;
+                customLanguage.settingEl.toggle(ai.outputLanguageMode === 'custom');
+                await plugin.saveSettings();
+            }));
+    containerEl.insertBefore(outputLanguage.settingEl, customLanguage.settingEl);
+    customLanguage.settingEl.toggle(ai.outputLanguageMode === 'custom');
+
     new Setting(containerEl)
         .setName(t('settings.ai.context.targetLanguage.name'))
         .setDesc(t('settings.ai.context.targetLanguage.desc'))

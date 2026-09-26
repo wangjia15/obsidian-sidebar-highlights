@@ -25,8 +25,10 @@ it.each(['closed', 'preview', 'background-editor'])('writes to the captured note
             content = content.slice(0, from.ch) + text + content.slice(to.ch);
         }
     } as unknown as MarkdownView['editor'];
-    const process = jest.fn(async (_file: TFile, transform: (text: string) => string) => { content = transform(content); });
+    const process = jest.fn(async (_file: TFile, transform: (text: string) => string) => { content = transform(content); return content; });
+    const detectAndStoreMarkdownHighlights = jest.fn();
     const plugin = {
+        detectAndStoreMarkdownHighlights,
         settings: { useInlineFootnotes: true },
         app: {
             workspace: {
@@ -40,4 +42,6 @@ it.each(['closed', 'preview', 'background-editor'])('writes to the captured note
     expect(await insertAiComment(plugin, highlight, 'AI answer', { quiet: true })).toBe(true);
     expect(content).toBe('==original highlight==^[AI answer]');
     expect(process).toHaveBeenCalledTimes(mode === 'background-editor' ? 0 : 1);
+    // The card picks the comment up at once, not on the next debounced rescan.
+    expect(detectAndStoreMarkdownHighlights).toHaveBeenCalledWith('==original highlight==^[AI answer]', file);
 });

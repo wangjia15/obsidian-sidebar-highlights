@@ -74,3 +74,51 @@ it('keeps completed parts visible while the next part streams', async () => {
     });
     expect(seen).toContain('one\n\ntwo');
 });
+
+
+function fakeService(): { service: AiService; sent: AiMessage[][] } {
+    const sent: AiMessage[][] = [];
+    const service = {
+        canStream: () => false,
+        complete: async (messages: AiMessage[]) => {
+            sent.push(messages);
+            return { text: `answer ${sent.length}`, usage: { promptTokens: 1, completionTokens: 1 } };
+        }
+    } as unknown as AiService;
+    return { service, sent };
+}
+
+const batch = (text: string): AiMessage[] => [{ role: 'user', content: text }];
+
+describe('runAiMessageBatches merging', () => {
+    it('joins parts in order without a merge', async () => {
+        const { service } = fakeService();
+        const result = await runAiMessageBatches(service, [batch('a'), batch('b')], { profile, signal: new AbortController().signal });
+        expect(result.combined.text).toBe('answer 1\n\nanswer 2');
+        expect(result.answers).toHaveLength(2);
+    });
+
+    it('folds several parts into one with a final merge request', async () => {
+        const { service, sent } = fakeService();
+        const merge = jest.fn((texts: string[]) => batch(`merge: ${texts.join(' | ')}`));
+        const result = await runAiMessageBatches(service, [batch('a'), batch('b')], {
+            profile, signal: new AbortController().signal, merge
+        });
+
+        expect(merge).toHaveBeenCalledWith(['answer 1', 'answer 2']);
+        expect(sent[2][0].content).toBe('merge: answer 1 | answer 2');
+        expect(result.combined.text).toBe('answer 3');
+        expect(result.answers.map(answer => answer.text)).toEqual(['answer 3']);
+        // Every request counts towards usage, the merge included.
+        expect(result.parts).toHaveLength(3);
+        expect(result.combined.usage).toEqual({ promptTokens: 3, completionTokens: 3 });
+    });
+
+    it('skips the merge for a single part', async () => {
+        const { service } = fakeService();
+        const merge = jest.fn();
+        const result = await runAiMessageBatches(service, [batch('a')], { profile, signal: new AbortController().signal, merge });
+        expect(merge).not.toHaveBeenCalled();
+        expect(result.combined.text).toBe('answer 1');
+    });
+});

@@ -1,4 +1,4 @@
-import { AiError, type AiProfile, type AiRequest, type AiResult } from '../types';
+import { AiError, type AiMessage, type AiProfile, type AiRequest, type AiResult } from '../types';
 import { httpJson, httpStream, joinUrl, pick, pickNumber, pickString, requireText, type Provider, type StreamHandlers } from './provider';
 import { isDoneSentinel, parseEventData } from './sse';
 
@@ -33,7 +33,7 @@ export class OpenAiCompatibleProvider implements Provider {
 
         const body: Record<string, unknown> = {
             model: profile.model,
-            messages: request.messages.map(message => ({ role: message.role, content: message.content })),
+            messages: request.messages.map(message => ({ role: message.role, content: openAiContent(message) })),
             stream
         };
         // Omitted rather than defaulted: reasoning models reject an explicit
@@ -156,4 +156,20 @@ function flattenContentParts(content: unknown): string {
     return content
         .map(part => (typeof part === 'string' ? part : pickString(part, 'text') ?? ''))
         .join('');
+}
+
+/**
+ * A plain string for text-only turns — which every compatible server accepts —
+ * and the content-parts array only when an image rides along, since some
+ * local servers reject the array form outright.
+ */
+function openAiContent(message: AiMessage): unknown {
+    if (message.role !== 'user' || !message.images?.length) return message.content;
+    return [
+        { type: 'text', text: message.content },
+        ...message.images.map(image => ({
+            type: 'image_url',
+            image_url: { url: `data:${image.mimeType};base64,${image.data}` }
+        }))
+    ];
 }

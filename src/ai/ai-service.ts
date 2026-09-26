@@ -53,7 +53,12 @@ export class AiService {
     private readonly cache = new Map<string, AiResult>();
 
     private cacheKey(messages: AiMessage[], profile: AiProfile, options: CompleteOptions): string {
-        return JSON.stringify([profile, messages, options.temperature, options.maxTokens]);
+        // Images are replaced by a fingerprint: a key holding every image's
+        // base64 body would keep megabytes alive per cached answer.
+        const keyed = messages.map(message => message.images?.length
+            ? { ...message, images: message.images.map(image => `${image.mimeType}:${image.data.length}:${fingerprint(image.data)}`) }
+            : message);
+        return JSON.stringify([profile, keyed, options.temperature, options.maxTokens]);
     }
 
     private remember(key: string, result: AiResult): AiResult {
@@ -297,4 +302,14 @@ export function createProfileForProvider(providerId: AiProfile['providerId'], id
 export function logSafe(error: unknown): string {
     const aiError = toAiError(error);
     return redact(`${aiError.kind}: ${aiError.message}${aiError.detail ? ` (${aiError.detail})` : ''}`);
+}
+
+/** FNV-1a over a string. Only used to tell cached images apart, not for security. */
+function fingerprint(text: string): string {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16);
 }

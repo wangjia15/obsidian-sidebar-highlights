@@ -95,9 +95,21 @@ describe('builtin prompts', () => {
             'summarize',
             'explain',
             'translate',
+            'terms',
+            'critique',
+            'formula',
+            'results',
             'ask',
+            'ideas',
             'tags',
+            'image-comment',
             'note-summary',
+            'paper-card',
+            'paper-review',
+            'highlight-review',
+            'paper-quiz',
+            'reproduce',
+            'related-work',
             'note-extract',
             'note-outline',
             'diagram'
@@ -111,8 +123,15 @@ describe('builtin prompts', () => {
             expect(prompt.icon).toBeTruthy();
             expect(prompt.template.trim()).not.toBe('');
             expect(prompt.builtin).toBe(true);
-            expect(prompt.enabled).toBe(true);
+            // A few specialised prompts ship switched off; see enabledByDefault.
+            expect(prompt.enabled).toBe(!['ideas', 'reproduce', 'related-work'].includes(prompt.id));
         }
+    });
+
+    it('merges the parts of a long note only for synthesis prompts', () => {
+        const merged = builtinPrompts().filter(prompt => prompt.mergeParts).map(prompt => prompt.id);
+        expect(merged).toEqual(['note-summary', 'paper-card', 'paper-review', 'highlight-review', 'reproduce', 'related-work']);
+        expect(builtinPrompts().every(prompt => !prompt.mergeParts || prompt.scope === 'note')).toBe(true);
     });
 
     it('references only known variables in every shipped template', () => {

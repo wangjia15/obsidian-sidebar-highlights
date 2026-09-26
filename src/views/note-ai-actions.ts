@@ -195,6 +195,7 @@ async function runNoteWrite(
                 // regenerate button on this path, so the cache would otherwise
                 // be inescapable.
                 bypassCache: true,
+                merge: prepared.mergeMessages,
                 onText: text => {
                     if (text) answered = true;
                     progressEl.setText(tail(text, 140));
