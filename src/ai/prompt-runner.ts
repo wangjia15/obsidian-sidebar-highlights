@@ -208,7 +208,11 @@ export async function prepareNotePromptRun(
         : resolveOutputLanguage(settings, uiLanguageName(i18n.getLocale()), options.targetLanguage);
     let interpolation: InterpolationResult | undefined;
     const messageBatches = chunks.map((noteContent, index) => {
-        const variables = buildNoteVariables({ ...source, noteContent }, chunkSettings, {
+        const variables = buildNoteVariables({ ...source, noteContent }, {
+            ...chunkSettings,
+            // Atomic frontmatter/code may exceed the target; never truncate it.
+            noteCharLimit: Math.max(chunkLimit, noteContent.length)
+        }, {
             input: options.input,
             targetLanguage: options.targetLanguage,
             fallbackLanguage: uiLanguageName(i18n.getLocale())
