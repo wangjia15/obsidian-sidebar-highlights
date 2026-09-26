@@ -1,6 +1,7 @@
 import { MarkdownView, Menu, Notice, TFile, normalizePath } from 'obsidian';
 import type HighlightCommentsPlugin from '../../main';
 import { t } from '../i18n';
+import { extractionCompletionMessage } from '../ai/extraction-notice';
 import { describeAiError, logSafe } from '../ai/ai-service';
 import { enabledPromptsForScope } from '../ai/prompt-library';
 import { prepareNotePromptRun, type PreparedNoteRun } from '../ai/prompt-runner';
@@ -414,7 +415,7 @@ async function markAnswerPassages(
         return;
     }
 
-    new Notice(t('ai.note.markedSummary', { marked, already, missed }), missed > 0 ? 8000 : 4000);
+    new Notice(extractionCompletionMessage({ marked, already, missed }), marked === 0 || missed > 0 ? 8000 : 4000);
     if (marked === 0) return;
 
     // The write went through the vault, so the sidebar learns about it from the

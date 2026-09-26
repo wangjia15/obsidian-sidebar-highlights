@@ -405,7 +405,6 @@ describe('variable list', () => {
     });
 });
 
-
 it('updates untouched extraction templates while preserving edited fields', () => {
     const extract = builtinPrompts().find(p => p.outputTarget === 'highlights')!;
     expect(extract.template).toContain('If you cannot quote a passage verbatim, skip it; do not rewrite it.');

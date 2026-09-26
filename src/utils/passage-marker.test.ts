@@ -165,7 +165,6 @@ describe('existingMarkupRanges', () => {
     });
 });
 
-
 describe('punctuation-tolerant passage matching', () => {
     it.each([
         ['他说「你好」之后', '他说"你好"之后'],
@@ -211,7 +210,6 @@ describe('punctuation-tolerant passage matching', () => {
         expect([result.marked.length, result.alreadyMarked.length, result.unmatched.length]).toEqual([1, 1, 1]);
     });
 });
-
 
 it('does not describe comments or code as already highlighted', () => {
     const content = '%% protected comment %% code passage ==existing highlight==';

@@ -548,10 +548,8 @@
       "chunked": "本文较长，将拆成 {{count}} 段处理，不会遗漏原文内容。",
       "appended": "已写入笔记的「{{heading}}」小节",
       "created": "已创建 {{path}}",
-      "marked": "已标记 {{marked}} 处",
       "markedSummary": "新标记 {{marked}} / 已被高亮 {{already}} / 找不到 {{missed}}",
-      "markedSome": "已标记 {{marked}} 处；{{missed}} 处未能在原文中逐字匹配，已跳过。",
-      "markedNone": "{{total}} 处摘录均未能在原文中逐字匹配，因此没有标记任何内容。模型做了转述而非原文摘录——请重试，或要求它严格照抄原文。",
+      "markedNone": "。模型可能做了转述而非原文摘录——请重试，或要求它严格照抄原文。",
       "noPassages": "模型没有返回可标记的内容。"
     },
     "image": {
