@@ -83,6 +83,8 @@ interface BuiltinPromptDef {
     outputTarget: PromptOutputTarget;
     /** See PromptPreset.mergeParts. */
     mergeParts?: boolean;
+    /** See PromptPreset.mergeInstruction. */
+    mergeInstruction?: string;
     /**
      * False ships the prompt switched off: useful, but specialised enough that
      * listing it in every menu by default would crowd out the common ones.
@@ -289,7 +291,10 @@ const BUILTIN_PROMPT_DEFS: BuiltinPromptDef[] = [
         scope: 'note',
         system: 'You outline documents. Answer in the same language as the document.',
         template: 'Write an outline of the note below as a nested markdown list: each section, and under it the points it makes. Output only the list.\n\n# {{noteTitle}}\n\n{{note}}',
-        outputTarget: 'append'
+        outputTarget: 'append',
+        // A chapter cut across parts shows up in both parts' outlines.
+        mergeParts: true,
+        mergeInstruction: 'This is an outline: list each section once. Where the same section heading appears in several partial results, keep it once and gather its points under it. Keep the sections in the order they appear in the document.'
     },
     {
         id: 'diagram',
@@ -329,7 +334,8 @@ export function builtinPrompt(def: BuiltinPromptDef, sortOrder: number): PromptP
         outputTarget: def.outputTarget,
         enabled: def.enabledByDefault ?? true,
         sortOrder,
-        ...(def.mergeParts ? { mergeParts: true } : {})
+        ...(def.mergeParts ? { mergeParts: true } : {}),
+        ...(def.mergeInstruction ? { mergeInstruction: def.mergeInstruction } : {})
     };
 }
 

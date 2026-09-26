@@ -33,9 +33,10 @@ export interface MultiPartResult {
  *
  * With `merge`, a run of more than one part ends with one more request that
  * folds the partial answers into a single one. Joining is right for output that
- * follows the document (an outline, extracted passages); it is wrong for a
+ * is matched back against the document (extracted passages); it is wrong for a
  * synthesis — a summary or a review of a long paper would otherwise arrive as
- * one per part, each ignorant of the others.
+ * one per part, each ignorant of the others — and for an outline, whose parts
+ * repeat the headings of a chapter cut between them.
  */
 export async function runAiMessageBatches(
     service: AiService,
