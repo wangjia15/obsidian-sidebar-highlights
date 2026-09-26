@@ -537,7 +537,8 @@
       "fileMissing": "That note is no longer in the vault.",
       "emptyAnswer": "The model returned nothing to insert.",
       "writeFailed": "Could not write to the note.",
-      "highlightMoved": "The highlight has changed since the sidebar last read it, so there is nowhere safe to attach the comment. Refresh the sidebar and try again."
+      "highlightMoved": "The highlight has changed since the sidebar last read it, so there is nowhere safe to attach the comment. Refresh the sidebar and try again.",
+      "retrying": "Retrying {{count}}…"
     },
     "batch": {
       "empty": "No highlights to run this on",
@@ -547,7 +548,8 @@
       "done": "Finished {{count}} highlights.",
       "stopped": "Stopped after {{count}} highlights.",
       "failures": "{{count}} failed: {{names}}",
-      "writeFailed": "The comment could not be written"
+      "writeFailed": "The comment could not be written",
+      "retrying": "{{done}}/{{total}} · {{current}} · Retrying {{count}}…"
     },
     "note": {
       "working": "Running {{name}} on {{note}}…",

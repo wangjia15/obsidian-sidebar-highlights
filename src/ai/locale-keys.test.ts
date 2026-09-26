@@ -61,7 +61,7 @@ describe('AI locale keys', () => {
         expect(t('settings.ai.actions.testFailed', { reason: 'boom' })).toContain('boom');
     });
 
-    it.each(['modals.aiResult.retrying', 'ai.errors.retried'])('interpolates the retry count in %s', key => {
+    it.each(['modals.aiResult.retrying', 'ai.errors.retried', 'ai.run.retrying', 'ai.batch.retrying'])('interpolates the retry count in %s', key => {
         expect(t(key, { count: 2 })).toContain('2');
         expect(t(key, { count: 2 })).not.toContain('{count}');
     });
