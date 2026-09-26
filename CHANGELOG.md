@@ -5,6 +5,26 @@ All notable changes to the Sidebar Highlights plugin will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0] - 2026-09-26
+
+### Added
+- **Image highlights.** Wrap an embedded image in highlight markers — `==![[figure.png]]==`, or `==![alt](figure.png)==` — and it appears in the sidebar as the picture itself, with its file name, rather than as markup. Right-click a rendered image in the note and choose **Highlight image**, or use the command **Highlight image at cursor** in source mode.
+- **AI on images.** Running a prompt on an image highlight sends the image to the model, not its embed syntax — to OpenAI-compatible services, Anthropic and Gemini alike. A new **Comment on image** prompt reads figures, charts and tables: what the figure is, how to read it, its main point and what is easy to miss. Large images are scaled down before sending, formats vision models refuse (SVG, BMP, AVIF) are converted, and the send confirmation lists each image and its size. Right-clicking a highlighted image offers the AI prompts directly. The model must accept image input.
+- **Prompts for reading papers.** On a highlight: **Explain terms**, **Critique**, **Explain formula**, **Interpret results** and **Research ideas**. On the whole note: **Paper reading card**, **Peer review**, **Review my highlights**, **Self-test questions** (answers hidden in collapsed callouts), **Reproduction checklist** and **Map related work**. Research ideas, the reproduction checklist and related work ship switched off; turn them on under Settings → AI → Prompts.
+- **Settings → AI → Answer language**: answer in Obsidian's interface language (the default), in the language of the source text, or in a language you name.
+- **The settings page is split into tabs** — General, Appearance, Comments, AI, Filters & export, Tasks and Backup.
+
+### Changed
+- **Built-in prompts are tighter.** Every prompt that reads a paper is told to stay with the text and say when something is not stated rather than invent numbers, citations or results. Explain has a fixed structure; Translate keeps citations, formulas and names untouched and gives the original of each technical term the first time it appears.
+- **Long notes give one answer, not one per part.** A note longer than the whole-note limit is sent in parts; summaries, reading cards, reviews and the other synthesis prompts now finish with a request that merges the parts' answers into one. Outlines and extraction still follow the document part by part.
+
+### Fixed
+- **AI answered in English for Chinese readers.** Built-in prompts told the model to answer in the language of the source, and no answer language was sent unless a translation language had been set. The answer language is now sent by default, and repeated at the end of the request for models that give the system prompt little weight. A translation language set in an earlier version carries over as the answer language.
+- **An AI comment could be written into the note without appearing on its card** until something else triggered a rescan. The note is now re-read the moment the comment is written.
+- **The AI menu on a highlight listed whole-note prompts**, which run on a highlight saw only that passage.
+- **Notices showed placeholders such as `{count}` verbatim**, and nine Chinese interface strings were missing.
+- **Pressing Enter to pick a word in a Chinese or Japanese input method sent the follow-up question** in the AI panel.
+
 ## [1.43.0] - 2026-09-26
 
 ### Added
