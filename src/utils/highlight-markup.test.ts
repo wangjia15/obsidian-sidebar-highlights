@@ -1,4 +1,7 @@
-import { createHighlightMarkup, isRecolorable, recolorHighlightMarkup } from './highlight-markup';
+import {
+    colorForEmoji, createHighlightMarkup, emojiForColor, highlightSourcePattern, isRecolorable,
+    recolorHighlightMarkup, splitColorEmoji
+} from './highlight-markup';
 
 describe('createHighlightMarkup', () => {
     it('writes a plain markdown highlight when no colour is asked for', () => {
@@ -78,5 +81,53 @@ describe('isRecolorable', () => {
     it('disclaims everything else', () => {
         expect(isRecolorable('%%a comment%%')).toBe(false);
         expect(isRecolorable('<span style="background: red">a quote</span>')).toBe(false);
+    });
+});
+
+describe('Obsidian 1.14 colour emoji', () => {
+    const palette = { red: '#ff6b6b', green: '#96ceb4', blue: '#45b7d1' };
+
+    it('splits a leading colour emoji off the text', () => {
+        expect(splitColorEmoji('🔴 important')).toEqual({ emoji: '🔴', text: 'important' });
+        expect(splitColorEmoji('🟣no space')).toEqual({ emoji: '🟣', text: 'no space' });
+        expect(splitColorEmoji('plain 🔴 text')).toEqual({ text: 'plain 🔴 text' });
+    });
+
+    it('maps emoji to the palette and back', () => {
+        expect(colorForEmoji('🔴', palette)).toBe('#ff6b6b');
+        expect(emojiForColor('#45B7D1', palette)).toBe('🔵');
+        expect(emojiForColor('#4ecdc4', palette)).toBeUndefined();
+    });
+
+    it('writes a palette colour as an emoji highlight and others as <mark>', () => {
+        expect(createHighlightMarkup('hi', '#ff6b6b', palette)).toBe('==🔴 hi==');
+        expect(createHighlightMarkup('hi', '#4ecdc4', palette)).toContain('<mark');
+        expect(createHighlightMarkup('hi', '#ff6b6b')).toContain('<mark');
+    });
+
+    it('replaces or drops the emoji when recolouring', () => {
+        expect(recolorHighlightMarkup('==🔴 hi==', '#96ceb4', palette)).toBe('==🟢 hi==');
+        expect(recolorHighlightMarkup('==🔴 hi==', '', palette)).toBe('==hi==');
+        expect(recolorHighlightMarkup('==🔴 hi==', '#4ecdc4', palette)).toContain('<mark');
+        expect(recolorHighlightMarkup('==hi==', '#ff6b6b', palette)).toBe('==🔴 hi==');
+    });
+
+    it('migrates an old <mark> colour to the emoji syntax', () => {
+        expect(recolorHighlightMarkup('<mark style="background: #ff6b6b;">hi</mark>', '#ff6b6b', palette)).toBe('==🔴 hi==');
+    });
+
+    it('finds a highlight with or without its emoji', () => {
+        const re = new RegExp(highlightSourcePattern('hi'));
+        expect(re.test('==hi==')).toBe(true);
+        expect(re.test('==🟠 hi==')).toBe(true);
+        expect(re.test('==ohi==')).toBe(false);
+    });
+});
+
+describe('orange and purple', () => {
+    it('use the palette slots when given, fixed defaults otherwise', () => {
+        expect(colorForEmoji('🟠', { orange: '#111111' })).toBe('#111111');
+        expect(colorForEmoji('🟣')).toBe('#a78bfa');
+        expect(createHighlightMarkup('hi', '#ff9f43', { orange: '#ff9f43' })).toBe('==🟠 hi==');
     });
 });

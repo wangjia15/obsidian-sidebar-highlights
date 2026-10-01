@@ -13,7 +13,7 @@ import { hasDelimiterInsideRanges } from './src/utils/range-exclusion';
 import { SortMode } from './src/utils/sort-order';
 import { resolveHighlightColor } from './src/utils/color-labels';
 import { createExistingHighlightMatcher } from './src/utils/highlight-reconcile';
-import { createHighlightMarkup, recolorHighlightMarkup } from './src/utils/highlight-markup';
+import { colorForEmoji, createHighlightMarkup, emojiForColor, recolorHighlightMarkup, splitColorEmoji, COLOR_EMOJI_PREFIX, type ColorEmoji } from './src/utils/highlight-markup';
 import { FileFolderSuggest } from './src/utils/file-folder-suggest';
 import {
     EXCALIDRAW_EXTENSION,
@@ -21,8 +21,14 @@ import {
     MINDMAP_SOURCES_KEY,
     buildExcalidrawMindmapFile,
     sanitizeFileName,
-    type MindmapNoteInput
+    readThemeChoice,
+    EXCALIDRAW_FONTS,
+    EXCALIDRAW_THEMES,
+    type MindmapNoteInput,
+    type ThemeChoice
 } from './src/utils/excalidraw-mindmap';
+import { RichAssetResolver } from './src/utils/excalidraw-assets';
+import { MindmapThemeModal } from './src/modals/mindmap-theme-modal';
 import { i18n, t } from './src/i18n';
 import { AiService } from './src/ai/ai-service';
 import { DEFAULT_AI_SETTINGS, addUsage, cloneAiSettings, usageMonth, type AiResult, type AiSettings } from './src/ai/types';
@@ -44,6 +50,7 @@ export interface Highlight {
     footnoteCount?: number;
     footnoteContents?: string[];
     color?: string;
+    colorEmoji?: ColorEmoji; // Obsidian 1.14 colour emoji the note's ==…== highlight starts with; `color` follows it
     collectionIds?: string[]; // Add collection support
     createdAt?: number; // Timestamp when highlight was created
     isNativeComment?: boolean; // True if this is a native comment (%% %) rather than highlight (== ==)
@@ -164,6 +171,8 @@ export interface CommentPluginSettings {
         teal: string;
         blue: string;
         green: string;
+        orange: string;
+        purple: string;
     };
     customColorNames: {
         yellow: string;
@@ -171,6 +180,8 @@ export interface CommentPluginSettings {
         teal: string;
         blue: string;
         green: string;
+        orange: string;
+        purple: string;
     };
     showCurrentNoteTab: boolean; // Show/hide Current Note tab
     showCurrentFolderTab: boolean; // Show/hide Current Folder tab
@@ -191,6 +202,9 @@ export interface CommentPluginSettings {
     excalidrawIncludeComments: boolean; // Draw each highlight's comments as child nodes of the mindmap
     excalidrawAutoSync: boolean; // Refresh a note's mindmap whenever its highlights or comments change
     excalidrawOpenBeside: boolean; // Open a mindmap in a split beside the note rather than replacing it
+    excalidrawTheme: string; // Look of exported mindmaps (see EXCALIDRAW_THEMES)
+    excalidrawFont: string; // Excalidraw font family id as a string; '' = the theme's own font
+    excalidrawBackground: string; // Canvas colour as hex; '' = the theme's own background
     ai: AiSettings; // AI providers, prompts and rich-content rendering (see src/ai/types.ts)
 }
 
@@ -231,14 +245,18 @@ const DEFAULT_SETTINGS: CommentPluginSettings = {
         red: '#ff6b6b',
         teal: '#4ecdc4',
         blue: '#45b7d1',
-        green: '#96ceb4'
+        green: '#96ceb4',
+        orange: '#ff9f43',
+        purple: '#a78bfa'
     },
     customColorNames: {
         yellow: '',
         red: '',
         teal: '',
         blue: '',
-        green: ''
+        green: '',
+        orange: '',
+        purple: ''
     },
     showCurrentNoteTab: true, // Show Current Note tab by default
     showCurrentFolderTab: false, // Current Folder tab hidden by default (enable in Settings > Views)
@@ -259,6 +277,9 @@ const DEFAULT_SETTINGS: CommentPluginSettings = {
     excalidrawIncludeComments: true, // A highlight's comments are half the point of the map
     excalidrawAutoSync: false, // Refreshing rewrites the drawing, so it is opt-in
     excalidrawOpenBeside: true, // Note on one side, map on the other
+    excalidrawTheme: 'classic',
+    excalidrawFont: '',
+    excalidrawBackground: '',
     ai: DEFAULT_AI_SETTINGS // AI off by default: no configuration means no network calls
 }
 
@@ -452,6 +473,32 @@ export default class HighlightCommentsPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'switch-excalidraw-mindmap-theme',
+            name: t('commands.switchExcalidrawTheme'),
+            checkCallback: (checking: boolean) => {
+                const target = this.activeMindmap();
+                if (!target) return false;
+                if (!checking) this.openMindmapThemePicker(target);
+                return true;
+            }
+        });
+
+        this.addCommand({
+            id: 'cycle-excalidraw-mindmap-theme',
+            name: t('commands.cycleExcalidrawTheme'),
+            checkCallback: (checking: boolean) => {
+                const target = this.activeMindmap();
+                if (!target) return false;
+                if (!checking) {
+                    const ids = Object.keys(EXCALIDRAW_THEMES);
+                    const current = this.mindmapTheme(target)?.theme ?? this.settings.excalidrawTheme;
+                    void this.switchMindmapTheme(target, ids[(Math.max(ids.indexOf(current), 0) + 1) % ids.length]);
+                }
+                return true;
+            }
+        });
+
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu, editor, view) => {
                 if (editor.getSelection()) {
@@ -621,7 +668,8 @@ export default class HighlightCommentsPlugin extends Plugin {
             merged.highlights = loadedData.highlights;
         }
         if (loadedData.customColorNames !== undefined) {
-            merged.customColorNames = loadedData.customColorNames;
+            // Slots added after the file was written (orange, purple) fall back to their defaults.
+            merged.customColorNames = { ...DEFAULT_SETTINGS.customColorNames, ...loadedData.customColorNames };
         }
 
         // `merged` is a shallow copy, so its `ai` is still the module-level
@@ -669,6 +717,8 @@ export default class HighlightCommentsPlugin extends Plugin {
         document.body.style.setProperty('--sh-highlight-teal', this.settings.customColors.teal);
         document.body.style.setProperty('--sh-highlight-blue', this.settings.customColors.blue);
         document.body.style.setProperty('--sh-highlight-green', this.settings.customColors.green);
+        document.body.style.setProperty('--sh-highlight-orange', this.settings.customColors.orange);
+        document.body.style.setProperty('--sh-highlight-purple', this.settings.customColors.purple);
 
         // Set font size custom properties
         document.body.style.setProperty('--sh-quote-font-size', `${this.settings.highlightFontSize}px`);
@@ -782,14 +832,15 @@ export default class HighlightCommentsPlugin extends Plugin {
             // them this highlight reads as a native comment of unknown kind and
             // is replaced by a fresh one, taking the colour with it.
             isNativeComment: false,
-            type: color ? 'html' : 'highlight',
+            type: color && !this.emojiFor(color) ? 'html' : 'highlight',
+            colorEmoji: color ? this.emojiFor(color) : undefined,
         };
 
         const fileHighlights = this.highlights.get(file.path) || [];
         fileHighlights.push(highlight);
         this.highlights.set(file.path, fileHighlights);
 
-        editor.replaceSelection(createHighlightMarkup(selection, color));
+        editor.replaceSelection(createHighlightMarkup(selection, color, this.colorEmojiPalette()));
         // The colour only survives if it is on disk before the re-scan the edit
         // triggers reconciles this file against stored highlights.
         void this.saveSettings();
@@ -831,7 +882,7 @@ export default class HighlightCommentsPlugin extends Plugin {
             // holds this highlight would corrupt the note, so bail instead.
             if (!markup.includes(highlight.text)) return false;
 
-            const replacement = recolorHighlightMarkup(markup, color);
+            const replacement = recolorHighlightMarkup(markup, color, this.colorEmojiPalette());
             if (replacement === null || replacement === markup) return replacement === markup;
 
             const updated = content.slice(0, highlight.startOffset) + replacement + content.slice(highlight.endOffset);
@@ -885,7 +936,7 @@ export default class HighlightCommentsPlugin extends Plugin {
      * `undefined` for the entry that leaves the highlight on the vault default.
      */
     getHighlightColorChoices(): Array<{ slot: keyof CommentPluginSettings['customColors']; value: string; label: string }> {
-        const slots: Array<keyof CommentPluginSettings['customColors']> = ['yellow', 'red', 'teal', 'blue', 'green'];
+        const slots: Array<keyof CommentPluginSettings['customColors']> = ['yellow', 'red', 'teal', 'blue', 'green', 'orange', 'purple'];
         return slots.map(slot => ({
             slot,
             value: this.settings.customColors[slot],
@@ -995,7 +1046,14 @@ export default class HighlightCommentsPlugin extends Plugin {
         highlights: Highlight[],
         options: { baseName: string; sourceFile?: TFile | null; rootLabel?: string }
     ): Promise<TFile | null> {
-        const content = this.buildMindmapContent(highlights, options.rootLabel || options.baseName, options.sourceFile ? [options.sourceFile.path] : []);
+        // Exporting again refreshes the map in whatever theme it was switched to,
+        // not in the one the settings would pick for a new map.
+        const previous = this.findExistingMindmap(options.baseName, options.sourceFile ?? null);
+        const content = await this.buildMindmapContent(
+            highlights, options.rootLabel || options.baseName,
+            options.sourceFile ? [options.sourceFile.path] : [],
+            this.themeForRefresh(previous)
+        );
 
         if (!content) {
             new Notice(t('notices.excalidrawNothingToExport'));
@@ -1042,7 +1100,7 @@ export default class HighlightCommentsPlugin extends Plugin {
      * node sits in the map, so a node that is still there keeps its id and any
      * `^id` reference to it survives.
      */
-    async syncExcalidrawMindmap(mindmapFile: TFile, options: { quiet?: boolean } = {}): Promise<boolean> {
+    async syncExcalidrawMindmap(mindmapFile: TFile, options: { quiet?: boolean } = {}, theme?: ThemeChoice): Promise<boolean> {
         // An auto-sync happens while the user is doing something else, so it
         // reports only failures; an explicit one confirms it did something.
         const report = (message: string) => { if (!options.quiet) new Notice(message); };
@@ -1058,7 +1116,10 @@ export default class HighlightCommentsPlugin extends Plugin {
             highlights.push(...(this.highlights.get(path) ?? []));
         }
 
-        const content = this.buildMindmapContent(highlights, mindmapFile.basename.replace(/\.excalidraw$/, ''), sources);
+        const content = await this.buildMindmapContent(
+            highlights, mindmapFile.basename.replace(/\.excalidraw$/, ''), sources,
+            theme ?? this.themeForRefresh(mindmapFile)
+        );
         if (!content) {
             report(t('notices.excalidrawNothingToExport'));
             return false;
@@ -1076,6 +1137,55 @@ export default class HighlightCommentsPlugin extends Plugin {
             }));
             return false;
         }
+    }
+
+    /** The look the settings give a newly exported map. */
+    private defaultMindmapTheme(): ThemeChoice {
+        return {
+            theme: this.settings.excalidrawTheme,
+            fontFamily: Number(this.settings.excalidrawFont) || null,
+            background: this.settings.excalidrawBackground || null
+        };
+    }
+
+    /**
+     * The look a refresh draws a map in: the theme the user switched it to by
+     * hand if they did, otherwise whatever the settings say now, so changing the
+     * settings and refreshing is enough to restyle a map.
+     */
+    private themeForRefresh(file: TFile | null): ThemeChoice {
+        const recorded = file ? this.mindmapTheme(file) : null;
+        return recorded?.pinned ? recorded : this.defaultMindmapTheme();
+    }
+
+    /** The theme a map was last drawn in, read from its frontmatter. */
+    private mindmapTheme(file: TFile): ThemeChoice | null {
+        return readThemeChoice(this.app.metadataCache.getFileCache(file)?.frontmatter);
+    }
+
+    /**
+     * Redraw a map in another theme. Like a refresh this rebuilds the drawing
+     * from the notes, so arrangement done by hand is replaced. The new theme
+     * stands on its own: a font or background override from the settings would
+     * otherwise hide what the switch was meant to change.
+     */
+    async switchMindmapTheme(file: TFile, themeId: string): Promise<boolean> {
+        const done = await this.syncExcalidrawMindmap(file, { quiet: true }, { theme: themeId, pinned: true });
+        if (done) new Notice(t('notices.excalidrawThemeChanged', { theme: t(`settings.export.excalidrawTheme.options.${themeId}`) }));
+        return done;
+    }
+
+    /** Ask which theme to redraw a map in. */
+    openMindmapThemePicker(file: TFile): void {
+        const current = this.mindmapTheme(file)?.theme ?? this.settings.excalidrawTheme;
+        new MindmapThemeModal(this.app, current, themeId => { void this.switchMindmapTheme(file, themeId); }).open();
+    }
+
+    /** The map a command should act on: the open drawing, or the open note's map. */
+    private activeMindmap(): TFile | null {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) return null;
+        return this.isOurMindmap(active) ? active : this.findMindmapForNote(active);
     }
 
     /**
@@ -1121,7 +1231,7 @@ export default class HighlightCommentsPlugin extends Plugin {
     }
 
     /** Turn highlights into `.excalidraw.md` content, grouped by the note each came from. */
-    private buildMindmapContent(highlights: Highlight[], rootLabel: string, sources: string[] = []): string | null {
+    private async buildMindmapContent(highlights: Highlight[], rootLabel: string, sources: string[], theme: ThemeChoice): Promise<string | null> {
         const byFile = new Map<string, Highlight[]>(sources.map(path => [path, []]));
         for (const highlight of highlights) {
             const bucket = byFile.get(highlight.filePath);
@@ -1155,11 +1265,18 @@ export default class HighlightCommentsPlugin extends Plugin {
             });
         }
 
-        return buildExcalidrawMindmapFile(notes, {
+        // Images and formulas need sizes the app only gives asynchronously, so
+        // the first build notes what it lacked and the second uses it.
+        const assets = new RichAssetResolver(this.app);
+        const build = () => buildExcalidrawMindmapFile(notes, {
             rootLabel,
             includeComments: this.settings.excalidrawIncludeComments,
-            sources: [...byFile.keys()].sort()
+            sources: [...byFile.keys()].sort(),
+            assets,
+            theme
         });
+        const first = build();
+        return await assets.measure() ? build() : first;
     }
 
     /**
@@ -1589,7 +1706,7 @@ export default class HighlightCommentsPlugin extends Plugin {
             }
 
             if (backupData.customColorNames) {
-                this.settings.customColorNames = backupData.customColorNames;
+                this.settings.customColorNames = { ...DEFAULT_SETTINGS.customColorNames, ...backupData.customColorNames };
                 logLine(`✓ Custom color names restored`);
             }
 
@@ -1920,8 +2037,18 @@ export default class HighlightCommentsPlugin extends Plugin {
         }
 
         // For regular highlights, check if it's still highlighted
-        const highlightPattern = new RegExp(`==\\s*${this.escapeRegex(highlight.text)}\\s*==`);
+        const highlightPattern = new RegExp(`==\\s*${COLOR_EMOJI_PREFIX}${this.escapeRegex(highlight.text)}\\s*==`);
         return highlightPattern.test(fileContent);
+    }
+
+    /** The slots Obsidian's colour emoji map to, as the user has them set. */
+    colorEmojiPalette(): { red: string; green: string; blue: string; orange: string; purple: string } {
+        const { red, green, blue, orange, purple } = this.settings.customColors;
+        return { red, green, blue, orange, purple };
+    }
+
+    private emojiFor(color: string): ColorEmoji | undefined {
+        return emojiForColor(color, this.colorEmojiPalette());
     }
 
     escapeRegex(str: string): string {
@@ -3055,7 +3182,17 @@ export default class HighlightCommentsPlugin extends Plugin {
         allMatches.forEach(({match, type, color, skip, isCustomPattern}, index) => {
             // Skip matches that were merged as adjacent comments
             if (skip) return;
-            const [, highlightText] = match;
+            let [, highlightText] = match;
+
+            // Obsidian 1.14 colours a highlight with an emoji at its start. The
+            // emoji is the colour, not part of the text.
+            let colorEmoji: ColorEmoji | undefined;
+            if (type === 'highlight' && !isCustomPattern && highlightText) {
+                const split = splitColorEmoji(highlightText);
+                colorEmoji = split.emoji;
+                highlightText = split.text;
+            }
+            const emojiColor = colorEmoji ? colorForEmoji(colorEmoji, this.colorEmojiPalette()) : undefined;
             
             // Skip empty or whitespace-only highlights
             if (!highlightText || highlightText.trim() === '') {
@@ -3158,8 +3295,12 @@ export default class HighlightCommentsPlugin extends Plugin {
                     footnoteCount: footnoteCount,
                     footnoteContents: footnoteContents,
                     isNativeComment: type === 'comment',
-                    // Update color for HTML highlights, preserve existing for others
-                    color: type === 'html' ? color : existingHighlight.color,
+                    // The colour comes from the note for HTML highlights and emoji ones;
+                    // for the rest, a stored choice is kept — except one that an emoji
+                    // gave and the note no longer carries.
+                    color: type === 'html' ? color : colorEmoji ? emojiColor : existingHighlight.colorEmoji ? undefined : existingHighlight.color,
+                    colorEmoji,
+                    text: colorEmoji ? highlightText : existingHighlight.text,
                     // Preserve existing createdAt timestamp if it exists
                     createdAt: existingHighlight.createdAt || Date.now(),
                     // Store the type for proper identification
@@ -3182,8 +3323,9 @@ export default class HighlightCommentsPlugin extends Plugin {
                     footnoteContents: footnoteContents,
                     createdAt: uniqueTimestamp,
                     isNativeComment: type === 'comment',
-                    // Set color for HTML highlights
-                    color: type === 'html' ? color : undefined,
+                    // Set color for HTML highlights and emoji ones
+                    color: type === 'html' ? color : emojiColor,
+                    colorEmoji,
                     // Store the type for proper identification
                     type: isCustomPattern ? 'custom' : type,
                     fullMatch: storedFullMatch(match, type, isCustomPattern)
@@ -3192,8 +3334,8 @@ export default class HighlightCommentsPlugin extends Plugin {
         });
 
         // Check for actual changes before updating and refreshing
-        const oldHighlightsJSON = JSON.stringify(existingHighlightsForFile.map(h => ({id: h.id, start: h.startOffset, end: h.endOffset, text: h.text, footnotes: h.footnoteCount, contents: h.footnoteContents?.filter(c => c.trim() !== ''), color: h.color, isNativeComment: h.isNativeComment})));
-        const newHighlightsJSON = JSON.stringify(newHighlights.map(h => ({id: h.id, start: h.startOffset, end: h.endOffset, text: h.text, footnotes: h.footnoteCount, contents: h.footnoteContents?.filter(c => c.trim() !== ''), color: h.color, isNativeComment: h.isNativeComment})));
+        const oldHighlightsJSON = JSON.stringify(existingHighlightsForFile.map(h => ({id: h.id, start: h.startOffset, end: h.endOffset, text: h.text, footnotes: h.footnoteCount, contents: h.footnoteContents?.filter(c => c.trim() !== ''), color: h.color, emoji: h.colorEmoji, isNativeComment: h.isNativeComment})));
+        const newHighlightsJSON = JSON.stringify(newHighlights.map(h => ({id: h.id, start: h.startOffset, end: h.endOffset, text: h.text, footnotes: h.footnoteCount, contents: h.footnoteContents?.filter(c => c.trim() !== ''), color: h.color, emoji: h.colorEmoji, isNativeComment: h.isNativeComment})));
 
         if (oldHighlightsJSON !== newHighlightsJSON) {
             this.highlights.set(file.path, newHighlights);
@@ -4400,6 +4542,66 @@ class HighlightSettingTab extends PluginSettingTab {
                     greenNameSetting?.setName(t('settings.colorNames.nameFor', { color: this.plugin.settings.customColors.green.toUpperCase() }));
                 }));
 
+        let orangeNameSetting: Setting;
+        let orangeColorPicker: ColorComponent | undefined; // Store reference to color picker
+
+        const orangeSetting = new Setting(containerEl)
+            .setName(t('settings.colors.highlightColor', { color: this.plugin.settings.customColors.orange.toUpperCase() }))
+            .setDesc(t('settings.colors.customizeSixth'))
+            .addColorPicker(colorPicker => {
+                orangeColorPicker = colorPicker; // Store reference
+                return colorPicker
+                    .setValue(this.plugin.settings.customColors.orange)
+                    .onChange(async (value) => {
+                        this.plugin.settings.customColors.orange = value;
+                        await this.plugin.saveSettings();
+                        this.updateColorMappings();
+                        orangeSetting.setName(t('settings.colors.highlightColor', { color: value.toUpperCase() }));
+                        orangeNameSetting?.setName(t('settings.colorNames.nameFor', { color: value.toUpperCase() }));
+                    });
+            })
+            .addButton(button => button
+                .setButtonText(t('settings.colors.reset'))
+                .setTooltip(t('settings.colors.resetToOrange'))
+                .onClick(async () => {
+                    this.plugin.settings.customColors.orange = '#ff9f43';
+                    await this.plugin.saveSettings();
+                    this.updateColorMappings();
+                    orangeSetting.setName(t('settings.colors.highlightColor', { color: this.plugin.settings.customColors.orange.toUpperCase() }));
+                    orangeColorPicker?.setValue('#ff9f43'); // Update color picker value
+                    orangeNameSetting?.setName(t('settings.colorNames.nameFor', { color: this.plugin.settings.customColors.orange.toUpperCase() }));
+                }));
+
+        let purpleNameSetting: Setting;
+        let purpleColorPicker: ColorComponent | undefined; // Store reference to color picker
+
+        const purpleSetting = new Setting(containerEl)
+            .setName(t('settings.colors.highlightColor', { color: this.plugin.settings.customColors.purple.toUpperCase() }))
+            .setDesc(t('settings.colors.customizeSeventh'))
+            .addColorPicker(colorPicker => {
+                purpleColorPicker = colorPicker; // Store reference
+                return colorPicker
+                    .setValue(this.plugin.settings.customColors.purple)
+                    .onChange(async (value) => {
+                        this.plugin.settings.customColors.purple = value;
+                        await this.plugin.saveSettings();
+                        this.updateColorMappings();
+                        purpleSetting.setName(t('settings.colors.highlightColor', { color: value.toUpperCase() }));
+                        purpleNameSetting?.setName(t('settings.colorNames.nameFor', { color: value.toUpperCase() }));
+                    });
+            })
+            .addButton(button => button
+                .setButtonText(t('settings.colors.reset'))
+                .setTooltip(t('settings.colors.resetToPurple'))
+                .onClick(async () => {
+                    this.plugin.settings.customColors.purple = '#a78bfa';
+                    await this.plugin.saveSettings();
+                    this.updateColorMappings();
+                    purpleSetting.setName(t('settings.colors.highlightColor', { color: this.plugin.settings.customColors.purple.toUpperCase() }));
+                    purpleColorPicker?.setValue('#a78bfa'); // Update color picker value
+                    purpleNameSetting?.setName(t('settings.colorNames.nameFor', { color: this.plugin.settings.customColors.purple.toUpperCase() }));
+                }));
+
         // Color names subsection
         new Setting(containerEl).setName(t('settings.colorNames.heading')).setHeading();
 
@@ -4459,6 +4661,30 @@ class HighlightSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.customColorNames.green)
                 .onChange(async (value) => {
                     this.plugin.settings.customColorNames.green = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshSidebar();
+                }));
+
+        orangeNameSetting = new Setting(containerEl)
+            .setName(t('settings.colorNames.nameFor', { color: this.plugin.settings.customColors.orange.toUpperCase() }))
+            .setDesc(t('settings.colorNames.desc'))
+            .addText(text => text
+                .setPlaceholder(t('settings.colorNames.placeholder'))
+                .setValue(this.plugin.settings.customColorNames.orange)
+                .onChange(async (value) => {
+                    this.plugin.settings.customColorNames.orange = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshSidebar();
+                }));
+
+        purpleNameSetting = new Setting(containerEl)
+            .setName(t('settings.colorNames.nameFor', { color: this.plugin.settings.customColors.purple.toUpperCase() }))
+            .setDesc(t('settings.colorNames.desc'))
+            .addText(text => text
+                .setPlaceholder(t('settings.colorNames.placeholder'))
+                .setValue(this.plugin.settings.customColorNames.purple)
+                .onChange(async (value) => {
+                    this.plugin.settings.customColorNames.purple = value;
                     await this.plugin.saveSettings();
                     this.plugin.refreshSidebar();
                 }));
@@ -4701,6 +4927,53 @@ class HighlightSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.excalidrawOpenBeside = value;
                     await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawTheme.name'))
+            .setDesc(t('settings.export.excalidrawTheme.desc'))
+            .addDropdown(dropdown => {
+                for (const id of Object.keys(EXCALIDRAW_THEMES)) {
+                    dropdown.addOption(id, t(`settings.export.excalidrawTheme.options.${id}`));
+                }
+                dropdown
+                    .setValue(this.plugin.settings.excalidrawTheme in EXCALIDRAW_THEMES ? this.plugin.settings.excalidrawTheme : 'classic')
+                    .onChange(async (value) => {
+                        this.plugin.settings.excalidrawTheme = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawFont.name'))
+            .setDesc(t('settings.export.excalidrawFont.desc'))
+            .addDropdown(dropdown => {
+                dropdown.addOption('', t('settings.export.excalidrawFont.themeDefault'));
+                for (const [id, font] of Object.entries(EXCALIDRAW_FONTS)) dropdown.addOption(id, font.name);
+                dropdown
+                    .setValue(this.plugin.settings.excalidrawFont)
+                    .onChange(async (value) => {
+                        this.plugin.settings.excalidrawFont = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName(t('settings.export.excalidrawBackground.name'))
+            .setDesc(t('settings.export.excalidrawBackground.desc'))
+            .addColorPicker(picker => picker
+                .setValue(this.plugin.settings.excalidrawBackground || '#ffffff')
+                .onChange(async (value) => {
+                    this.plugin.settings.excalidrawBackground = value;
+                    await this.plugin.saveSettings();
+                }))
+            .addExtraButton(button => button
+                .setIcon('reset')
+                .setTooltip(t('settings.export.excalidrawBackground.reset'))
+                .onClick(async () => {
+                    this.plugin.settings.excalidrawBackground = '';
+                    await this.plugin.saveSettings();
+                    this.display();
                 }));
 
         // ========== TASKS TAB SETTINGS ==========

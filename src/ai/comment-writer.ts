@@ -7,6 +7,8 @@
  * testable on their own.
  */
 
+import { highlightSourcePattern } from '../utils/highlight-markup';
+
 /** Matches both references `[^1]` and definitions `[^1]:`. */
 const ANY_FOOTNOTE_KEY = /\[\^([A-Za-z0-9_-]+)\]/g;
 
@@ -210,7 +212,7 @@ function searchPatternsFor(anchor: HighlightAnchor): RegExp[] {
     const text = escapeRegex(anchor.text);
     if (anchor.isNativeComment) return [...exact, new RegExp(`%%${text}%%`, 'g')];
 
-    const markdown = new RegExp(`==${text}==`, 'g');
+    const markdown = new RegExp(highlightSourcePattern(text), 'g');
     // Whitespace either side because an HTML highlight's stored text comes from
     // the element's textContent, which a formatter may have padded since.
     const html = new RegExp(`<(${HTML_HIGHLIGHT_TAGS})\\b[^>]*>\\s*${text}\\s*</\\1>`, 'gi');

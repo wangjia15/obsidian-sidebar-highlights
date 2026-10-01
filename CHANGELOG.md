@@ -5,6 +5,15 @@ All notable changes to the Sidebar Highlights plugin will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0] - 2026-10-01
+
+### Added
+- **LaTeX, images and tables in Excalidraw mindmaps.** `$$…$$` and `$…$` become rendered LaTeX (a sentence with inline math is drawn as one wrapped formula), `![[image.png]]` and `![](url)` become embedded images scaled to fit the node, and pipe tables become a real grid of cells with alignment.
+- **Mindmap themes.** Six themes — Classic, Hand-drawn, Paper, Clean, Dark and Blueprint — plus a font and a canvas background colour, under Settings → Export. Highlight nodes keep their own colour in every theme. Settings apply the next time a map is exported or refreshed.
+- **Switch a mindmap's theme after it is drawn.** Commands **Switch Excalidraw mindmap theme** and **Next Excalidraw mindmap theme**, and a **Mindmap theme…** entry in the sidebar export menu. A map you switched by hand keeps its theme on refresh; other maps follow the settings. Like a refresh, switching redraws the map.
+- **Obsidian 1.14 colour highlights.** A colour emoji at the start of a highlight — `==🔴 text==`, 🟠 🟢 🔵 🟣 — is read as its colour and kept out of the text. Colours written from the plugin use this syntax when they match one of those emoji; other colours still use `<mark>`. Copying with syntax, editing, comments and AI-marked passages understand it too.
+- **Orange and purple** join the preset highlight colours, with their own name, picker and reset.
+
 ## [1.44.0] - 2026-09-26
 
 ### Added

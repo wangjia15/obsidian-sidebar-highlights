@@ -17,6 +17,8 @@ export type CopyFormat = 'with-syntax' | 'plain' | 'list';
 
 export interface CopyableHighlight {
     text: string;
+    /** Obsidian 1.14 colour emoji the highlight starts with, kept so `with-syntax` copies keep the colour. */
+    colorEmoji?: string;
     isNativeComment?: boolean;
     footnoteContents?: string[];
 }
@@ -42,7 +44,7 @@ export function formatHighlightForCopy(highlight: CopyableHighlight, format: Cop
         text = `%%${highlight.text}%%`;
     } else if (format === 'with-syntax') {
         // Both regular markdown and HTML highlights export as ==text==
-        text = `==${highlight.text}==`;
+        text = `==${highlight.colorEmoji ? `${highlight.colorEmoji} ` : ''}${highlight.text}==`;
     } else {
         text = highlight.text;
     }

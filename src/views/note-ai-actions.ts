@@ -400,6 +400,7 @@ async function markAnswerPassages(
         await rewriteNote(plugin, file, content => {
             const result = markPassages(content, passages, {
                 color: plugin.settings.ai.extractedHighlightColor,
+                palette: plugin.colorEmojiPalette(),
                 // The plugin's own rule for what is code, so a passage is never
                 // marked inside a fence the highlight scanner would then ignore.
                 excludedRanges: plugin.getCodeBlockRanges(content)

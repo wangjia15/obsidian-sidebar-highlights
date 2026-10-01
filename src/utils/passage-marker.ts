@@ -15,7 +15,7 @@
  */
 
 import { footnoteDefinitionRanges } from './footnote-parser';
-import { createHighlightMarkup } from './highlight-markup';
+import { createHighlightMarkup, type ColorEmojiPalette } from './highlight-markup';
 
 export interface Range {
     start: number;
@@ -93,6 +93,8 @@ function stripListMarkup(line: string): string {
 export interface MarkOptions {
     /** Hex colour for the highlights written, or empty for plain `==text==`. */
     color?: string;
+    /** Lets a palette colour be written as Obsidian's colour-emoji highlight instead of `<mark>`. */
+    palette?: ColorEmojiPalette;
     /** Ranges nothing may be marked inside, typically code blocks. */
     excludedRanges?: Range[];
 }
@@ -153,7 +155,7 @@ export function markPassages(
         const text = content.slice(range.start, range.end);
         result =
             result.slice(0, range.start) +
-            createHighlightMarkup(text, options.color || undefined) +
+            createHighlightMarkup(text, options.color || undefined, options.palette) +
             result.slice(range.end);
     }
 

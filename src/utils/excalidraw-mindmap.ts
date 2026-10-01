@@ -13,6 +13,22 @@
  */
 
 import { headingForLine } from './heading-group';
+import { EXCALIDRAW_FONTS, resolveTheme, type ExcalidrawTheme, type ThemeChoice } from './excalidraw-theme';
+
+export { EXCALIDRAW_FONTS, EXCALIDRAW_THEMES, type ThemeChoice } from './excalidraw-theme';
+import {
+    LATEX_NATURAL_FONT,
+    buildInlineFormula,
+    estimateFormulaSize,
+    fileIdFor,
+    fitImage,
+    hasRichContent,
+    parseRichBlocks,
+    type RichAssets,
+    type RichBlock
+} from './excalidraw-rich';
+
+export type { ImageAsset, RichAssets } from './excalidraw-rich';
 
 /** File extension the Obsidian Excalidraw plugin owns. */
 export const EXCALIDRAW_EXTENSION = '.excalidraw.md';
@@ -65,6 +81,14 @@ export interface MindmapNode {
     line?: number;
     /** Obsidian wiki link back to the place in the note this node came from. */
     link?: string;
+    /**
+     * Set only when the label holds LaTeX, an image or a table: the label split
+     * into blocks that are drawn as such. A plain-text node leaves this unset
+     * and is drawn as a single bound label.
+     */
+    blocks?: RichBlock[];
+    /** Note the node came from, which relative image references resolve against. */
+    notePath?: string;
     children: MindmapNode[];
 }
 
@@ -139,7 +163,7 @@ function buildNoteNode(note: MindmapNoteInput, includeComments: boolean): Mindma
     for (const highlight of [...note.highlights].sort((a, b) => a.line - b.line)) {
         const owner = headingForLine(headings, highlight.line);
         const parent = owner ? byLine.get(owner.line) ?? root : root;
-        parent.children.push(highlightNode(highlight, includeComments, noteLink(note.path, owner?.heading)));
+        parent.children.push(highlightNode(highlight, includeComments, noteLink(note.path, owner?.heading), note.path));
     }
 
     sortChildren(root);
@@ -151,7 +175,8 @@ function buildNoteNode(note: MindmapNoteInput, includeComments: boolean): Mindma
 function highlightNode(
     highlight: MindmapHighlightInput,
     includeComments: boolean,
-    link: string | undefined
+    link: string | undefined,
+    notePath: string | undefined
 ): MindmapNode {
     const children: MindmapNode[] = [];
     if (includeComments) {
@@ -159,7 +184,12 @@ function highlightNode(
             const label = cleanLabel(comment);
             // A comment's link is its highlight's: the comment is a footnote
             // attached to that spot, so that is where reading it starts.
-            if (label) children.push({ kind: 'comment', label, color: highlight.color, link, children: [] });
+            if (label) {
+                children.push({
+                    kind: 'comment', label, color: highlight.color, link, notePath,
+                    blocks: richBlocks(comment), children: []
+                });
+            }
         }
     }
     return {
@@ -168,8 +198,16 @@ function highlightNode(
         color: highlight.color,
         line: highlight.line,
         link,
+        notePath,
+        blocks: richBlocks(highlight.text),
         children
     };
+}
+
+/** The label's blocks, or undefined when it is plain text and needs no special drawing. */
+function richBlocks(markdown: string): RichBlock[] | undefined {
+    const blocks = parseRichBlocks(markdown);
+    return hasRichContent(blocks) ? blocks : undefined;
 }
 
 /**
@@ -240,6 +278,11 @@ const KIND_STYLES: Record<MindmapNodeKind, KindStyle> = {
     comment: { fontSize: 13, maxTextWidth: 260, background: '#f8f9fa', stroke: '#868e96', strokeStyle: 'dashed', strokeWidth: 1 }
 };
 
+/** A kind's size and line style, wearing the theme's colours. */
+function themedStyle(kind: MindmapNodeKind, theme: ExcalidrawTheme): KindStyle {
+    return { ...KIND_STYLES[kind], ...theme.palette[kind] };
+}
+
 interface LaidOutNode {
     node: MindmapNode;
     depth: number;
@@ -258,7 +301,23 @@ interface LaidOutNode {
     textColor: string;
     strokeStyle: 'solid' | 'dashed';
     strokeWidth: number;
+    /** Present when the node is drawn as stacked blocks instead of one bound label. */
+    rich?: LaidPiece[];
     children: LaidOutNode[];
+}
+
+/** A block of a rich node, positioned relative to the node's top-left corner. */
+type LaidPiece = { dx: number; dy: number; width: number; height: number } & (
+    | { kind: 'text'; lines: string[]; text: string }
+    | { kind: 'latex'; formula: string }
+    | { kind: 'image'; link: string; external: boolean; fileKey: string }
+    | { kind: 'table'; columns: number[]; rows: TableRow[]; align: Array<'left' | 'center' | 'right'> }
+);
+
+interface TableRow {
+    header: boolean;
+    height: number;
+    cells: Array<{ lines: string[]; text: string }>;
 }
 
 /**
@@ -269,10 +328,10 @@ interface LaidOutNode {
  * kana, full-width punctuation) take roughly the full em, everything else about
  * half of it.
  */
-export function measureText(text: string, fontSize: number): number {
+export function measureText(text: string, fontSize: number, latinWidth = 0.55): number {
     let width = 0;
     for (const char of text) {
-        width += isFullWidth(char) ? fontSize : fontSize * 0.55;
+        width += isFullWidth(char) ? fontSize : fontSize * latinWidth;
     }
     return width;
 }
@@ -301,7 +360,7 @@ function isFullWidth(char: string): boolean {
  * because CJK is written without them. A word longer than the line is broken
  * mid-word rather than allowed to overflow.
  */
-export function wrapLabel(text: string, maxWidth: number, fontSize: number, maxLines: number): string[] {
+export function wrapLabel(text: string, maxWidth: number, fontSize: number, maxLines: number, latinWidth = 0.55): string[] {
     const tokens = tokenize(text);
     const lines: string[] = [];
     let current = '';
@@ -313,7 +372,7 @@ export function wrapLabel(text: string, maxWidth: number, fontSize: number, maxL
 
     for (const token of tokens) {
         const candidate = current + token;
-        if (current.length > 0 && measureText(candidate, fontSize) > maxWidth) {
+        if (current.length > 0 && measureText(candidate, fontSize, latinWidth) > maxWidth) {
             push();
             // A leading space after a break would look like an indent.
             current = token === ' ' ? '' : token;
@@ -322,9 +381,9 @@ export function wrapLabel(text: string, maxWidth: number, fontSize: number, maxL
         }
 
         // Break a single token that cannot fit on a line of its own.
-        while (measureText(current, fontSize) > maxWidth && current.length > 1) {
+        while (measureText(current, fontSize, latinWidth) > maxWidth && current.length > 1) {
             let cut = current.length - 1;
-            while (cut > 1 && measureText(current.slice(0, cut), fontSize) > maxWidth) cut--;
+            while (cut > 1 && measureText(current.slice(0, cut), fontSize, latinWidth) > maxWidth) cut--;
             lines.push(current.slice(0, cut));
             current = current.slice(cut);
         }
@@ -359,11 +418,32 @@ function tokenize(text: string): string[] {
     return tokens;
 }
 
-function measureNode(node: MindmapNode, depth: number, orderIndex = 0): LaidOutNode {
-    const style = KIND_STYLES[node.kind];
-    const lines = wrapLabel(node.label || ' ', style.maxTextWidth, style.fontSize, Number.POSITIVE_INFINITY);
-    const textWidth = Math.max(...lines.map(line => measureText(line, style.fontSize)));
-    const textHeight = lines.length * style.fontSize * LINE_HEIGHT;
+function latinWidthOf(theme: ExcalidrawTheme): number {
+    return EXCALIDRAW_FONTS[theme.fontFamily]?.width ?? 0.55;
+}
+
+/**
+ * A highlight (or coloured comment) is filled with its own colour, so its ink
+ * is chosen for contrast with that. Everything else sits on the theme's palette
+ * and uses the theme's text colour when it has one.
+ */
+function textColorFor(node: MindmapNode, background: string, theme: ExcalidrawTheme): string {
+    const ownColour = (node.kind === 'highlight' || node.kind === 'comment') && node.color;
+    return !ownColour && theme.textColor ? theme.textColor : readableTextColor(background);
+}
+
+const BLOCK_GAP = 8;
+const CELL_PAD_X = 8;
+const CELL_PAD_Y = 5;
+const TABLE_MAX_CELL = 180;
+
+function measureNode(node: MindmapNode, depth: number, orderIndex: number, theme: ExcalidrawTheme, assets?: RichAssets): LaidOutNode {
+    const style = themedStyle(node.kind, theme);
+    const latin = latinWidthOf(theme);
+    const rich = node.blocks ? layoutBlocks(node, style, latin, assets) : null;
+    const lines = rich ? [''] : wrapLabel(node.label || ' ', style.maxTextWidth, style.fontSize, Number.POSITIVE_INFINITY, latin);
+    const textWidth = rich ? rich.width : Math.max(...lines.map(line => measureText(line, style.fontSize, latin)));
+    const textHeight = rich ? rich.height : lines.length * style.fontSize * LINE_HEIGHT;
 
     const background = node.kind === 'highlight' && node.color
         ? node.color
@@ -374,6 +454,18 @@ function measureNode(node: MindmapNode, depth: number, orderIndex = 0): LaidOutN
         ? darken(node.color, 0.45)
         : style.stroke;
 
+    const width = Math.max(MIN_BOX_WIDTH, Math.ceil(textWidth) + H_PADDING * 2);
+    const height = Math.ceil(textHeight) + V_PADDING * 2;
+
+    // Blocks were placed against the width of the widest one; centre-aligned
+    // ones shift if the box turned out wider (the minimum width).
+    if (rich) {
+        for (const piece of rich.pieces) {
+            piece.dx = piece.kind === 'text' ? H_PADDING : (width - piece.width) / 2;
+            piece.dy += V_PADDING;
+        }
+    }
+
     return {
         node,
         depth,
@@ -382,16 +474,124 @@ function measureNode(node: MindmapNode, depth: number, orderIndex = 0): LaidOutN
         fontSize: style.fontSize,
         x: 0,
         y: 0,
-        width: Math.max(MIN_BOX_WIDTH, Math.ceil(textWidth) + H_PADDING * 2),
-        height: Math.ceil(textHeight) + V_PADDING * 2,
+        width,
+        height,
         textWidth: Math.ceil(textWidth),
         textHeight: Math.ceil(textHeight),
         background,
         stroke,
-        textColor: readableTextColor(background),
+        textColor: textColorFor(node, background, theme),
         strokeStyle: style.strokeStyle,
         strokeWidth: style.strokeWidth,
-        children: node.children.map((child, index) => measureNode(child, depth + 1, index))
+        rich: rich?.pieces,
+        children: node.children.map((child, index) => measureNode(child, depth + 1, index, theme, assets))
+    };
+}
+
+/** Stack a rich node's blocks top to bottom and report the size of the stack. */
+function layoutBlocks(
+    node: MindmapNode,
+    style: KindStyle,
+    latin: number,
+    assets: RichAssets | undefined
+): { pieces: LaidPiece[]; width: number; height: number } {
+    const scale = style.fontSize / LATEX_NATURAL_FONT;
+    const pieces: LaidPiece[] = [];
+    let y = 0;
+
+    const add = (piece: LaidPiece) => {
+        piece.dy = y;
+        y += piece.height + BLOCK_GAP;
+        pieces.push(piece);
+    };
+
+    const addText = (text: string) => {
+        const lines = wrapLabel(text || ' ', style.maxTextWidth, style.fontSize, Number.POSITIVE_INFINITY, latin);
+        add({
+            kind: 'text', lines, text, dx: 0, dy: 0,
+            width: Math.ceil(Math.max(...lines.map(line => measureText(line, style.fontSize, latin)))),
+            height: Math.ceil(lines.length * style.fontSize * LINE_HEIGHT)
+        });
+    };
+
+    const addFormula = (formula: string) => {
+        const natural = assets?.formula(formula) ?? estimateFormulaSize(formula);
+        // Wide formulas shrink to the node's measure instead of making it sprawl.
+        const fit = Math.min(scale, (style.maxTextWidth * 1.4) / Math.max(natural.width, 1));
+        add({
+            kind: 'latex', formula, dx: 0, dy: 0,
+            width: Math.max(1, Math.round(natural.width * fit)),
+            height: Math.max(1, Math.round(natural.height * fit))
+        });
+    };
+
+    for (const block of node.blocks ?? []) {
+        switch (block.type) {
+            case 'text':
+                addText(block.text);
+                break;
+            case 'latex':
+                addFormula(block.formula);
+                break;
+            case 'inline-math':
+                addFormula(buildInlineFormula(block.source, style.maxTextWidth / scale));
+                break;
+            case 'image': {
+                const asset = assets?.image(block.target, node.notePath);
+                if (!asset) {
+                    // Not resolvable here, so say what was there rather than leave a hole.
+                    addText(`![[${block.target}]]`);
+                    break;
+                }
+                const size = fitImage(asset.width, asset.height, block.width);
+                add({
+                    kind: 'image', link: asset.link, external: asset.external === true,
+                    fileKey: `${asset.external ? 'url' : 'file'}:${asset.link}`,
+                    dx: 0, dy: 0, ...size
+                });
+                break;
+            }
+            case 'table':
+                add(layoutTable(block, style, latin));
+                break;
+        }
+    }
+
+    const width = Math.max(1, ...pieces.map(piece => piece.width));
+    const height = Math.max(1, y - BLOCK_GAP);
+    return { pieces, width, height };
+}
+
+function layoutTable(block: Extract<RichBlock, { type: 'table' }>, style: KindStyle, latin: number): LaidPiece {
+    const columnCount = Math.max(block.header.length, ...block.rows.map(row => row.length));
+    const fontSize = style.fontSize;
+    const wrapCell = (raw: string | undefined) => {
+        const text = (raw ?? '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').trim();
+        return { text, lines: wrapLabel(text || ' ', TABLE_MAX_CELL - CELL_PAD_X * 2, fontSize, Number.POSITIVE_INFINITY, latin) };
+    };
+
+    const rows: TableRow[] = [block.header, ...block.rows].map((cells, index) => {
+        const wrapped = Array.from({ length: columnCount }, (_, column) => wrapCell(cells[column]));
+        const lineCount = Math.max(...wrapped.map(cell => cell.lines.length));
+        return {
+            header: index === 0,
+            height: Math.ceil(lineCount * fontSize * LINE_HEIGHT) + CELL_PAD_Y * 2,
+            cells: wrapped
+        };
+    });
+
+    const columns = Array.from({ length: columnCount }, (_, column) =>
+        Math.ceil(Math.max(...rows.map(row =>
+            Math.max(...row.cells[column].lines.map(line => measureText(line, fontSize, latin)))
+        ))) + CELL_PAD_X * 2
+    );
+
+    return {
+        kind: 'table', columns, rows,
+        align: Array.from({ length: columnCount }, (_, column) => block.align[column] ?? 'left'),
+        dx: 0, dy: 0,
+        width: columns.reduce((sum, width) => sum + width, 0),
+        height: rows.reduce((sum, row) => sum + row.height, 0)
     };
 }
 
@@ -620,6 +820,13 @@ export interface SceneOptions {
      * Down-facing, Up-Down. Defaults to Right-facing, matching how we draw it.
      */
     growthMode?: string;
+    /** Font, background and palette; see excalidraw-theme. */
+    theme?: ThemeChoice;
+    /**
+     * Where images live and how big formulas render. Without it, images are left
+     * as their markdown source and formulas are sized by estimate.
+     */
+    assets?: RichAssets;
 }
 
 /**
@@ -657,7 +864,10 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
     };
     const noiseFor = (id: string, salt: number) => hashString(id, salt) % 2 ** 31;
 
-    const laidOut = positionNodes(measureNode(root, 0));
+    const theme = resolveTheme(options.theme);
+    const latin = latinWidthOf(theme);
+    const laidOut = positionNodes(measureNode(root, 0, 0, theme, options.assets));
+    const embedded = new Map<string, EmbeddedFileEntry>();
 
     const containers: ExcalidrawElement[] = [];
     const texts: ExcalidrawElement[] = [];
@@ -670,6 +880,8 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
         const containerId = idFor(key, 'box');
         const textId = idFor(key, 'text');
         ids.set(node, containerId);
+
+        const groupId = node.rich ? idFor(key, 'group') : null;
 
         containers.push({
             id: containerId,
@@ -684,16 +896,16 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
             fillStyle: 'solid',
             strokeWidth: node.strokeWidth,
             strokeStyle: node.strokeStyle,
-            roughness: 1,
+            roughness: theme.roughness,
             opacity: 100,
-            groupIds: [],
+            groupIds: groupId ? [groupId] : [],
             frameId: null,
             roundness: { type: 3 },
             seed: noiseFor(containerId, 1),
             version: 1,
             versionNonce: noiseFor(containerId, 2),
             isDeleted: false,
-            boundElements: [{ id: textId, type: 'text' }],
+            boundElements: node.rich ? [] : [{ id: textId, type: 'text' }],
             updated,
             // The Excalidraw plugin draws a link badge on any element with a
             // link, which is how a node gets you back to the note it came from.
@@ -703,6 +915,124 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
                 ? { growthMode: options.growthMode || DEFAULT_GROWTH_MODE }
                 : { mindmapOrder: node.orderIndex }
         });
+
+        /** The elements one block of a rich node is drawn with. Grouped with the node's box so they move together. */
+        const pieceElements = (piece: LaidPiece, index: number): ExcalidrawElement[] => {
+            const x = node.x + piece.dx;
+            const y = node.y + piece.dy;
+            const base = (id: string, extra: Record<string, unknown>): ExcalidrawElement => ({
+                id,
+                angle: 0,
+                backgroundColor: 'transparent',
+                fillStyle: 'solid',
+                strokeWidth: 1,
+                strokeStyle: 'solid',
+                roughness: theme.roughness,
+                opacity: 100,
+                groupIds: [groupId as string],
+                frameId: null,
+                roundness: null,
+                seed: noiseFor(id, 1),
+                version: 1,
+                versionNonce: noiseFor(id, 2),
+                isDeleted: false,
+                boundElements: [],
+                updated,
+                link: null,
+                locked: false,
+                ...extra
+            } as unknown as ExcalidrawElement);
+            const textBase = (id: string, text: string, box: { x: number; y: number; width: number; height: number }, extra: Record<string, unknown>) =>
+                base(id, {
+                    type: 'text',
+                    strokeColor: node.textColor,
+                    ...box,
+                    fontSize: node.fontSize,
+                    fontFamily: theme.fontFamily,
+                    text,
+                    lineHeight: LINE_HEIGHT,
+                    ...extra
+                });
+            const slot = `${key} #${index}`;
+
+            switch (piece.kind) {
+                case 'text': {
+                    const id = idFor(slot, 'text');
+                    return [textBase(id, piece.lines.join('\n'), { x: round(x), y: round(y), width: piece.width, height: piece.height }, {
+                        rawText: piece.text,
+                        originalText: piece.text,
+                        textAlign: 'left',
+                        verticalAlign: 'top',
+                        containerId: null,
+                        autoResize: false
+                    })];
+                }
+                case 'latex': {
+                    const fileId = fileIdFor(`$$${piece.formula}`);
+                    embedded.set(fileId, { id: fileId, latex: piece.formula });
+                    return [base(idFor(slot, 'latex'), {
+                        type: 'image', x: round(x), y: round(y), width: piece.width, height: piece.height,
+                        strokeColor: 'transparent', fileId, status: 'saved', scale: [1, 1],
+                        customData: { latex: piece.formula }
+                    })];
+                }
+                case 'image': {
+                    const fileId = fileIdFor(piece.fileKey);
+                    embedded.set(fileId, { id: fileId, link: piece.link, external: piece.external });
+                    return [base(idFor(slot, 'image'), {
+                        type: 'image', x: round(x), y: round(y), width: piece.width, height: piece.height,
+                        strokeColor: 'transparent', fileId, status: 'saved', scale: [1, 1]
+                    })];
+                }
+                case 'table': {
+                    const out: ExcalidrawElement[] = [];
+                    let rowY = y;
+                    piece.rows.forEach((row, rowIndex) => {
+                        let cellX = x;
+                        row.cells.forEach((cell, column) => {
+                            const cellId = idFor(`${slot} r${rowIndex}c${column}`, 'cell');
+                            const cellTextId = idFor(`${slot} r${rowIndex}c${column}`, 'celltext');
+                            const columnWidth = piece.columns[column];
+                            out.push(base(cellId, {
+                                type: 'rectangle', x: round(cellX), y: round(rowY), width: columnWidth, height: row.height,
+                                strokeColor: node.stroke,
+                                // A tint of the outline colour, faint enough for the node's own text colour to stay legible.
+                                backgroundColor: row.header ? node.stroke : 'transparent',
+                                opacity: row.header ? 30 : 100,
+                                boundElements: [{ id: cellTextId, type: 'text' }]
+                            }));
+                            const textWidth = Math.max(0, ...cell.lines.map(line => measureText(line, node.fontSize, latin)));
+                            const textHeight = cell.lines.length * node.fontSize * LINE_HEIGHT;
+                            const align = piece.align[column];
+                            const textX = align === 'left'
+                                ? cellX + CELL_PAD_X
+                                : align === 'right' ? cellX + columnWidth - CELL_PAD_X - textWidth : cellX + (columnWidth - textWidth) / 2;
+                            out.push(textBase(cellTextId, cell.lines.join('\n'), {
+                                x: round(textX), y: round(rowY + (row.height - textHeight) / 2),
+                                width: Math.ceil(textWidth), height: Math.ceil(textHeight)
+                            }, {
+                                rawText: cell.text,
+                                originalText: cell.text,
+                                textAlign: align,
+                                verticalAlign: 'middle',
+                                containerId: cellId,
+                                autoResize: true
+                            }));
+                            cellX += columnWidth;
+                        });
+                        rowY += row.height;
+                    });
+                    return out;
+                }
+            }
+        };
+
+        if (node.rich && groupId) {
+            node.rich.forEach((piece, index) => {
+                texts.push(...pieceElements(piece, index));
+            });
+            return;
+        }
 
         texts.push({
             id: textId,
@@ -717,7 +1047,7 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
             fillStyle: 'solid',
             strokeWidth: 1,
             strokeStyle: 'solid',
-            roughness: 1,
+            roughness: theme.roughness,
             opacity: 100,
             groupIds: [],
             frameId: null,
@@ -731,7 +1061,7 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
             link: null,
             locked: false,
             fontSize: node.fontSize,
-            fontFamily: 2,
+            fontFamily: theme.fontFamily,
             text: node.lines.join('\n'),
             // The Obsidian Excalidraw plugin keeps a text element's markdown
             // source here, and writes *that* back into the `## Text Elements`
@@ -771,12 +1101,12 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
                 width: round(Math.abs(endX - startX)),
                 height: round(Math.abs(endY - startY)),
                 angle: 0,
-                strokeColor: child.stroke,
+                strokeColor: theme.arrow ?? child.stroke,
                 backgroundColor: 'transparent',
                 fillStyle: 'solid',
                 strokeWidth: 1,
                 strokeStyle: 'solid',
-                roughness: 1,
+                roughness: theme.roughness,
                 opacity: 100,
                 groupIds: [],
                 frameId: null,
@@ -804,7 +1134,7 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
         }
     });
 
-    return {
+    const scene: ExcalidrawScene = {
         type: 'excalidraw',
         version: 2,
         source: EXCALIDRAW_SOURCE,
@@ -813,11 +1143,27 @@ export function buildMindmapScene(root: MindmapNode, options: SceneOptions = {})
             gridSize: null,
             gridStep: 5,
             gridModeEnabled: false,
-            viewBackgroundColor: '#ffffff'
+            viewBackgroundColor: theme.background
         },
         files: {}
     };
+    embeddedFiles.set(scene, [...embedded.values()]);
+    return scene;
 }
+
+/** An image or formula a scene refers to by `fileId`; the Excalidraw plugin loads these from `## Embedded Files`. */
+interface EmbeddedFileEntry {
+    id: string;
+    latex?: string;
+    link?: string;
+    external?: boolean;
+}
+
+/**
+ * Kept beside the scene rather than in it: the plugin reads these from the
+ * markdown, not from the scene JSON, so they must not leak into the JSON.
+ */
+const embeddedFiles = new WeakMap<ExcalidrawScene, EmbeddedFileEntry[]>();
 
 function appendBoundElement(elements: ExcalidrawElement[], elementId: string, arrowId: string): void {
     const element = elements.find(candidate => candidate.id === elementId);
@@ -850,9 +1196,31 @@ const EXCALIDRAW_BANNER =
 export const MINDMAP_FLAG_KEY = 'sidebar-highlights-mindmap';
 export const MINDMAP_SOURCES_KEY = 'sidebar-highlights-sources';
 
+/** The look a map was drawn with, recorded so a refresh redraws it the same way and a theme switch has something to switch from. */
+export const MINDMAP_THEME_KEY = 'sidebar-highlights-theme';
+export const MINDMAP_FONT_KEY = 'sidebar-highlights-font';
+export const MINDMAP_BACKGROUND_KEY = 'sidebar-highlights-background';
+export const MINDMAP_PINNED_KEY = 'sidebar-highlights-theme-pinned';
+
 export interface MarkdownOptions {
     /** Note paths the map was built from, recorded for refreshes. */
     sources?: string[];
+    /** Look the scene was built with; recorded in the frontmatter. */
+    theme?: ThemeChoice;
+}
+
+/** The theme choice recorded in a map's frontmatter, or null when it records none. */
+export function readThemeChoice(frontmatter: Record<string, unknown> | undefined): ThemeChoice | null {
+    const theme = frontmatter?.[MINDMAP_THEME_KEY];
+    if (typeof theme !== 'string') return null;
+    const font = Number(frontmatter?.[MINDMAP_FONT_KEY]);
+    const background = frontmatter?.[MINDMAP_BACKGROUND_KEY];
+    return {
+        theme,
+        fontFamily: font > 0 ? font : null,
+        background: typeof background === 'string' ? background : null,
+        pinned: frontmatter?.[MINDMAP_PINNED_KEY] === true
+    };
 }
 
 /**
@@ -871,9 +1239,21 @@ export function buildExcalidrawMarkdown(scene: ExcalidrawScene, options: Markdow
         })
         .join('\n\n');
 
+    // Formulas are `$$…$$`, vault images `[[path]]`, remote ones a bare URL.
+    const embeddedSection = (embeddedFiles.get(scene) ?? []).map(entry =>
+        entry.latex !== undefined
+            ? `${entry.id}: $$${entry.latex.trim()}$$\n`
+            : `${entry.id}: ${entry.external ? entry.link : `[[${entry.link}]]`}\n`
+    );
+
     const sources = options.sources ?? [];
+    const choice = options.theme;
     const provenance = [
         `${MINDMAP_FLAG_KEY}: true`,
+        ...(choice?.theme ? [`${MINDMAP_THEME_KEY}: ${JSON.stringify(choice.theme)}`] : []),
+        ...(choice?.fontFamily ? [`${MINDMAP_FONT_KEY}: ${choice.fontFamily}`] : []),
+        ...(choice?.pinned ? [`${MINDMAP_PINNED_KEY}: true`] : []),
+        ...(choice?.background ? [`${MINDMAP_BACKGROUND_KEY}: ${JSON.stringify(choice.background)}`] : []),
         ...(sources.length > 0
             // JSON quoting is also valid YAML, and handles a path with a colon
             // or a quote in it without a YAML library.
@@ -897,6 +1277,7 @@ export function buildExcalidrawMarkdown(scene: ExcalidrawScene, options: Markdow
         '## Text Elements',
         textElements,
         '',
+        ...(embeddedSection.length > 0 ? ['## Embedded Files', ...embeddedSection, ''] : []),
         '%%',
         '## Drawing',
         '```json',

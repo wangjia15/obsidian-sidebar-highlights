@@ -153,7 +153,9 @@ export class HighlightRenderer {
             [this.plugin.settings.customColors.red]: 'highlight-color-red', 
             [this.plugin.settings.customColors.teal]: 'highlight-color-teal',
             [this.plugin.settings.customColors.blue]: 'highlight-color-blue',
-            [this.plugin.settings.customColors.green]: 'highlight-color-green'
+            [this.plugin.settings.customColors.green]: 'highlight-color-green',
+            [this.plugin.settings.customColors.orange]: 'highlight-color-orange',
+            [this.plugin.settings.customColors.purple]: 'highlight-color-purple'
         };
         
         return colorMap[color] || 'highlight-color-default';
@@ -378,8 +380,8 @@ export class HighlightRenderer {
                 // HTML highlights - just copy the text content (can't reconstruct exact HTML)
                 textToCopy = `==${highlight.text}==`;
             } else {
-                // Regular markdown highlight: ==text==
-                textToCopy = `==${highlight.text}==`;
+                // Regular markdown highlight: ==text==, or ==🔴 text== when coloured
+                textToCopy = `==${highlight.colorEmoji ? `${highlight.colorEmoji} ` : ''}${highlight.text}==`;
             }
 
             // Add footnotes/comments if they exist (but not for native comments)
@@ -866,6 +868,7 @@ export class HighlightRenderer {
      */
     private highlightMarkup(highlight: Highlight): string {
         if (highlight.fullMatch) return highlight.fullMatch;
+        if (highlight.colorEmoji) return `==${highlight.colorEmoji} ${highlight.text}==`;
         return highlight.color
             ? `<mark style="background: ${highlight.color};">${highlight.text}</mark>`
             : `==${highlight.text}==`;
@@ -890,7 +893,9 @@ export class HighlightRenderer {
             { name: 'red', value: this.plugin.settings.customColors.red },
             { name: 'teal', value: this.plugin.settings.customColors.teal },
             { name: 'blue', value: this.plugin.settings.customColors.blue },
-            { name: 'green', value: this.plugin.settings.customColors.green }
+            { name: 'green', value: this.plugin.settings.customColors.green },
+            { name: 'orange', value: this.plugin.settings.customColors.orange },
+            { name: 'purple', value: this.plugin.settings.customColors.purple }
         ];
 
         // Clearing the colour is only an action when there is one to clear:

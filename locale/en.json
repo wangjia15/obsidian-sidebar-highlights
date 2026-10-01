@@ -9,7 +9,9 @@
     "exportExcalidraw": "Export note highlights to Excalidraw mindmap",
     "syncExcalidraw": "Refresh Excalidraw mindmap",
     "runAiPromptOnDocument": "AI on the whole note: {{name}}",
-    "highlightImage": "Highlight image at cursor"
+    "highlightImage": "Highlight image at cursor",
+    "switchExcalidrawTheme": "Switch Excalidraw mindmap theme",
+    "cycleExcalidrawTheme": "Next Excalidraw mindmap theme"
   },
   "tabs": {
     "currentNote": "Current note",
@@ -138,7 +140,11 @@
       "resetToRed": "Reset to default red (#ff6b6b)",
       "resetToTeal": "Reset to default teal (#4ecdc4)",
       "resetToBlue": "Reset to default blue (#45b7d1)",
-      "resetToGreen": "Reset to default green (#96ceb4)"
+      "resetToGreen": "Reset to default green (#96ceb4)",
+      "customizeSixth": "Customize the sixth highlight color for the sidebar hover color picker.",
+      "customizeSeventh": "Customize the seventh highlight color for the sidebar hover color picker.",
+      "resetToOrange": "Reset to default orange (#ff9f43)",
+      "resetToPurple": "Reset to default purple (#a78bfa)"
     },
     "colorNames": {
       "heading": "Color names",
@@ -150,7 +156,9 @@
         "red": "Red",
         "teal": "Teal",
         "blue": "Blue",
-        "green": "Green"
+        "green": "Green",
+        "orange": "Orange",
+        "purple": "Purple"
       }
     },
     "comments": {
@@ -471,6 +479,28 @@
       "excalidrawOpenBeside": {
         "name": "Open mindmaps beside the note",
         "desc": "Open a mindmap in a split pane next to the note it came from, so the two can be read together. Turn off to open it in a new tab instead."
+      },
+      "excalidrawTheme": {
+        "name": "Mindmap theme",
+        "desc": "Colours, line style and font of exported mindmaps. Highlight nodes keep their own colour. Applies the next time a map is exported or refreshed.",
+        "options": {
+          "classic": "Classic",
+          "sketch": "Hand-drawn",
+          "paper": "Paper",
+          "clean": "Clean",
+          "dark": "Dark",
+          "blueprint": "Blueprint"
+        }
+      },
+      "excalidrawFont": {
+        "name": "Mindmap font",
+        "desc": "Font used for every label in the map.",
+        "themeDefault": "Theme default"
+      },
+      "excalidrawBackground": {
+        "name": "Mindmap background",
+        "desc": "Canvas colour. Reset to use the theme's own background.",
+        "reset": "Use theme background"
       }
     },
     "tabs": {
@@ -595,7 +625,8 @@
     "exportExcalidraw": "Export visible highlights to Excalidraw mindmap ({{count}})",
     "syncExcalidraw": "Refresh Excalidraw mindmap ({{count}})",
     "syncExcalidrawButton": "Refresh Excalidraw mindmap",
-    "noteAi": "AI on this note"
+    "noteAi": "AI on this note",
+    "excalidrawTheme": "Mindmap theme…"
   },
   "actions": {
     "moveToCollection": "Move to...",
@@ -900,6 +931,9 @@
       "copiedSource": "Diagram source copied",
       "copiedSvg": "SVG copied",
       "copyFailed": "Could not copy to clipboard"
+    },
+    "mindmapTheme": {
+      "placeholder": "Choose a mindmap theme"
     }
   },
   "notices": {
@@ -923,7 +957,8 @@
     "excalidrawExportFailed": "Could not create the Excalidraw file: {{reason}}",
     "excalidrawUpdated": "Mindmap refreshed at {{path}}",
     "excalidrawNotAMindmap": "This file is not a mindmap exported by Sidebar Highlights",
-    "noImageAtCursor": "Place the cursor on an image embed first."
+    "noImageAtCursor": "Place the cursor on an image embed first.",
+    "excalidrawThemeChanged": "Mindmap theme: {{theme}}"
   },
   "render": {
     "diagramError": "Diagram could not be rendered",

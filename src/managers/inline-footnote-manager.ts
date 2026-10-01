@@ -1,6 +1,7 @@
 import { Editor } from 'obsidian';
 import type { Highlight } from '../../main';
 import { HtmlHighlightParser } from '../utils/html-highlight-parser';
+import { highlightSourcePattern } from '../utils/highlight-markup';
 
 export interface InlineFootnoteMatch {
     content: string;
@@ -262,7 +263,7 @@ export class InlineFootnoteManager {
             }
         } else {
             // Regular markdown highlight pattern
-            const regexPattern = `==${escapedText}==`;
+            const regexPattern = highlightSourcePattern(escapedText);
             const highlightRegex = new RegExp(regexPattern, 'g');
             let match;
             while ((match = highlightRegex.exec(content)) !== null) {

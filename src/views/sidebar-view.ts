@@ -34,6 +34,7 @@ import { DateSuggest } from '../utils/date-suggest';
 import { t } from '../i18n';
 import { addAiMenuItems, aiAvailable, showAiMenu } from './ai-actions';
 import { noteAiAvailable, showNoteAiMenu } from './note-ai-actions';
+import { highlightSourcePattern } from '../utils/highlight-markup';
 
 // Private Obsidian APIs used by the sidebar (not part of the public typings).
 interface PrivateCommandsApi {
@@ -4946,7 +4947,7 @@ export class HighlightsSidebarView extends ItemView {
         } else {
             // Regular markdown highlight - use regex to find in full content
             const escapedText = this.escapeRegex(highlight.text);
-            const markdownHighlightPattern = `==${escapedText}==`;
+            const markdownHighlightPattern = highlightSourcePattern(escapedText);
             const markdownHighlightRegex = new RegExp(markdownHighlightPattern, 'g');
 
             let bestMatch: { index: number, length: number } | null = null;
@@ -5445,7 +5446,7 @@ export class HighlightsSidebarView extends ItemView {
             }
         } else {
             // Regular markdown highlight pattern
-            const regexPattern = `==${this.escapeRegex(highlight.text)}==`;
+            const regexPattern = highlightSourcePattern(this.escapeRegex(highlight.text));
             const regex = new RegExp(regexPattern, 'g');
             let matchResult;
             while ((matchResult = regex.exec(content)) !== null) {
@@ -5699,7 +5700,7 @@ export class HighlightsSidebarView extends ItemView {
                 }
             } else {
                 // Regular markdown highlight pattern
-                const regexPattern = `==${escapedText}==`;
+                const regexPattern = highlightSourcePattern(escapedText);
                 const highlightRegex = new RegExp(regexPattern, 'g');
                 let match;
                 while ((match = highlightRegex.exec(content)) !== null) {
@@ -6015,6 +6016,12 @@ export class HighlightsSidebarView extends ItemView {
         }
         if (hex === colors.green && customNames.green.trim()) {
             return customNames.green.trim();
+        }
+        if (hex === colors.orange && customNames.orange?.trim()) {
+            return customNames.orange.trim();
+        }
+        if (hex === colors.purple && customNames.purple?.trim()) {
+            return customNames.purple.trim();
         }
 
         // Fall back to hex code
@@ -7583,6 +7590,15 @@ export class HighlightsSidebarView extends ItemView {
                     void this.exportVisibleHighlightsToExcalidraw();
                 });
         });
+
+        if (existing) {
+            menu.addItem((item) => {
+                item
+                    .setTitle(t('toolbar.excalidrawTheme'))
+                    .setIcon('palette')
+                    .onClick(() => this.plugin.openMindmapThemePicker(existing));
+            });
+        }
     }
 
     /**

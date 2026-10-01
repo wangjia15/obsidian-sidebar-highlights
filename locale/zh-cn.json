@@ -9,7 +9,9 @@
     "exportExcalidraw": "将当前笔记的高亮导出为 Excalidraw 思维导图",
     "syncExcalidraw": "刷新 Excalidraw 思维导图",
     "runAiPromptOnDocument": "对整篇笔记运行：{{name}}",
-    "highlightImage": "高亮光标处的图片"
+    "highlightImage": "高亮光标处的图片",
+    "switchExcalidrawTheme": "切换 Excalidraw 思维导图主题",
+    "cycleExcalidrawTheme": "下一个 Excalidraw 思维导图主题"
   },
   "tabs": {
     "currentNote": "当前笔记",
@@ -138,7 +140,11 @@
       "resetToRed": "重置为默认红色 (#ff6b6b)",
       "resetToTeal": "重置为默认青色 (#4ecdc4)",
       "resetToBlue": "重置为默认蓝色 (#45b7d1)",
-      "resetToGreen": "重置为默认绿色 (#96ceb4)"
+      "resetToGreen": "重置为默认绿色 (#96ceb4)",
+      "customizeSixth": "自定义侧栏悬停取色器中的第六个高亮颜色。",
+      "customizeSeventh": "自定义侧栏悬停取色器中的第七个高亮颜色。",
+      "resetToOrange": "重置为默认橙色 (#ff9f43)",
+      "resetToPurple": "重置为默认紫色 (#a78bfa)"
     },
     "colorNames": {
       "heading": "颜色名称",
@@ -150,7 +156,9 @@
         "red": "红色",
         "teal": "青色",
         "blue": "蓝色",
-        "green": "绿色"
+        "green": "绿色",
+        "orange": "橙色",
+        "purple": "紫色"
       }
     },
     "comments": {
@@ -471,6 +479,28 @@
       "excalidrawOpenBeside": {
         "name": "在笔记旁边打开思维导图",
         "desc": "在笔记右侧的分栏中打开思维导图，便于对照阅读。关闭则在新标签页中打开。"
+      },
+      "excalidrawTheme": {
+        "name": "思维导图主题",
+        "desc": "导出思维导图的配色、线条风格和字体。高亮节点保留自己的颜色。下次导出或刷新时生效。",
+        "options": {
+          "classic": "经典",
+          "sketch": "手绘",
+          "paper": "纸张",
+          "clean": "简洁",
+          "dark": "深色",
+          "blueprint": "蓝图"
+        }
+      },
+      "excalidrawFont": {
+        "name": "思维导图字体",
+        "desc": "图中所有文字使用的字体。",
+        "themeDefault": "跟随主题"
+      },
+      "excalidrawBackground": {
+        "name": "思维导图背景",
+        "desc": "画布颜色。重置后使用主题自带的背景。",
+        "reset": "使用主题背景"
       }
     },
     "tabs": {
@@ -595,7 +625,8 @@
     "exportExcalidraw": "将可见高亮导出为 Excalidraw 思维导图（{{count}}）",
     "syncExcalidraw": "刷新 Excalidraw 思维导图（{{count}}）",
     "syncExcalidrawButton": "刷新 Excalidraw 思维导图",
-    "noteAi": "对本篇笔记使用 AI"
+    "noteAi": "对本篇笔记使用 AI",
+    "excalidrawTheme": "思维导图主题…"
   },
   "actions": {
     "moveToCollection": "移动到...",
@@ -900,6 +931,9 @@
       "copiedSource": "已复制图表源码",
       "copiedSvg": "已复制 SVG",
       "copyFailed": "无法写入剪贴板"
+    },
+    "mindmapTheme": {
+      "placeholder": "选择思维导图主题"
     }
   },
   "notices": {
@@ -923,7 +957,8 @@
     "excalidrawExportFailed": "无法创建 Excalidraw 文件：{{reason}}",
     "excalidrawUpdated": "思维导图已刷新：{{path}}",
     "excalidrawNotAMindmap": "该文件不是 Sidebar Highlights 导出的思维导图",
-    "noImageAtCursor": "请先将光标放在图片嵌入上。"
+    "noImageAtCursor": "请先将光标放在图片嵌入上。",
+    "excalidrawThemeChanged": "思维导图主题：{{theme}}"
   },
   "render": {
     "diagramError": "图表无法渲染",

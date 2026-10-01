@@ -50,6 +50,14 @@
     border-left-color: var(--sh-highlight-green, #96ceb4);
 }
 
+.highlight-item-card.highlight-color-orange {
+    border-left-color: var(--sh-highlight-orange, #ff9f43);
+}
+
+.highlight-item-card.highlight-color-purple {
+    border-left-color: var(--sh-highlight-purple, #a78bfa);
+}
+
 .highlight-item-card.highlight-color-default {
     border-left-color: rgb(var(--text-highlight-bg-rgb));
 }
@@ -465,6 +473,8 @@
 .group-color-square[data-color-name="teal"] { background-color: var(--sh-highlight-teal, #4ecdc4); }
 .group-color-square[data-color-name="blue"] { background-color: var(--sh-highlight-blue, #45b7d1); }
 .group-color-square[data-color-name="green"] { background-color: var(--sh-highlight-green, #96ceb4); }
+.group-color-square[data-color-name="orange"] { background-color: var(--sh-highlight-orange, #ff9f43); }
+.group-color-square[data-color-name="purple"] { background-color: var(--sh-highlight-purple, #a78bfa); }
 
 .group-tag-icon {
     width: 12px;
@@ -535,6 +545,14 @@
 
 .highlight-item-card.highlight-color-green.highlight-selected {
     box-shadow: 0 0 0 1.5px var(--sh-highlight-green, #96ceb4), var(--shadow-s);
+}
+
+.highlight-item-card.highlight-color-orange.highlight-selected {
+    box-shadow: 0 0 0 1.5px var(--sh-highlight-orange, #ff9f43), var(--shadow-s);
+}
+
+.highlight-item-card.highlight-color-purple.highlight-selected {
+    box-shadow: 0 0 0 1.5px var(--sh-highlight-purple, #a78bfa), var(--shadow-s);
 }
 
 /* Support for custom colors in selection state */
@@ -625,6 +643,8 @@
 .hover-color-option[data-color-name="teal"] { background-color: var(--sh-highlight-teal, #4ecdc4); }
 .hover-color-option[data-color-name="blue"] { background-color: var(--sh-highlight-blue, #45b7d1); }
 .hover-color-option[data-color-name="green"] { background-color: var(--sh-highlight-green, #96ceb4); }
+.hover-color-option[data-color-name="orange"] { background-color: var(--sh-highlight-orange, #ff9f43); }
+.hover-color-option[data-color-name="purple"] { background-color: var(--sh-highlight-purple, #a78bfa); }
 
 /* Legacy support: fallback for old data-color hex values */
 /* These will be overridden by inline styles set by JavaScript */
